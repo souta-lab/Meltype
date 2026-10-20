@@ -615,6 +615,16 @@ public sealed class CompositionText
                         offset += token.Romaji.Length;
                     }
                 }
+                // 英単語の最後の k + を (back|wo の kwo = くぉ) は、k を英単語に残して を と分ける
+                // (kwo を くぉ として足したため、英単語の直後の を が くぉ とつながっていた)。
+                // 前が英字 1 文字かどうかではなく、そこまでの英字が英単語になるかで決める
+                // (akwo → あくぉ、ikwo → いくぉ のように、日本語の綴りの途中の kwo は分けない)。
+                else if (raw.Length == 3 && raw.Equals("kwo", StringComparison.OrdinalIgnoreCase) &&
+                         EndsWithEnglishWordFromUnit(_units.Count, raw[..1]))
+                {
+                    _units.Add(new CompositionUnit(raw[..1], raw[..1]));
+                    _units.Add(new CompositionUnit("を", raw[1..]));
+                }
                 else _units.Add(new CompositionUnit(tokens[i].Kana, raw));
                 position += length;
             }

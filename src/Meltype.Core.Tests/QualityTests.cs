@@ -239,6 +239,18 @@ internal static class Quality
         new("綴り", "xa", "ぁ"),
         new("綴り", "la", "ぁ"),
         new("綴り", "mala", "まぁ"),
+        // 報告のあった入力 (issue #960・#920・#852・#918)
+        new("綴り", "kwo", "くぉ"),
+        new("綴り", "kwo-to", "くぉーと"),
+        // kwo の前が日本語の綴りのときは分けない (akwo → あkを になっていた)
+        new("綴り", "akwo", "あくぉ"),
+        new("綴り", "ikwo", "いくぉ"),
+        // 英単語の最後の k + を は分ける (back|wo)
+        new("混在", "backwo", "backを"),
+        new("混在", "taskwo", "taskを"),
+        new("カタカナ語", "karenda-", "かれんだー"),
+        new("英語", "image", "image"),
+        new("英語", "pure", "pure"),
         new("綴り", "ltu", "っ"),
         new("綴り", "moraltute", "もらって"),
         new("綴り", "moraltsute", "もらって"),
