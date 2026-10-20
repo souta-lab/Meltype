@@ -357,6 +357,24 @@ public sealed class CompositionText
     }
 
     /// <summary>英字の並びの最後が、4 文字以上の知っている英単語で終わっているか (… hotel)。</summary>
+    /// <summary>
+    /// kwo を k + を に割るか。英単語の最後の k のあとに を を打ったとき (back|wo・ink|wo・ok|wo) だけ割る。
+    /// 日本語の綴りの途中 (akwo・ikwo) は、そこまでの英字が英単語にならないので割らない。
+    /// 同梱の辞書 (ok・bank) と、スペルチェッカーだけが知っている語 (ink) の両方を見る。
+    /// </summary>
+    private bool EndsWithEnglishWordBeforeKwo()
+    {
+        var letters = "k";
+        for (var i = _units.Count - 1; i >= 0 && _units[i].Raw.Length > 0 && _units[i].Raw.All(char.IsAsciiLetter); i--)
+        {
+            letters = _units[i].Raw + letters;
+            if (letters.Length < 2) continue;
+            var lower = letters.ToLowerInvariant();
+            if (_detector.IsListedEnglishWord(lower) || _detector.IsKnownEnglishWord(lower) || _detector.IsSpellWord(lower)) return true;
+        }
+        return false;
+    }
+
     private bool EndsWithEnglishWord(string letters)
     {
         for (var start = 0; start <= letters.Length - 4; start++)
@@ -620,7 +638,7 @@ public sealed class CompositionText
                 // 前が英字 1 文字かどうかではなく、そこまでの英字が英単語になるかで決める
                 // (akwo → あくぉ、ikwo → いくぉ のように、日本語の綴りの途中の kwo は分けない)。
                 else if (raw.Length == 3 && raw.Equals("kwo", StringComparison.OrdinalIgnoreCase) &&
-                         EndsWithEnglishWordFromUnit(_units.Count, raw[..1]))
+                         EndsWithEnglishWordBeforeKwo())
                 {
                     _units.Add(new CompositionUnit(raw[..1], raw[..1]));
                     _units.Add(new CompositionUnit("を", raw[1..]));
