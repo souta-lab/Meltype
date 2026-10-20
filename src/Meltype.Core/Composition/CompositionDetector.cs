@@ -145,15 +145,6 @@ public sealed partial class CompositionDetector
             (token.Contains('@') && token.Any(char.IsAsciiLetter) || token.Contains('_') || token.Contains("://", StringComparison.Ordinal) ||
              System.Text.RegularExpressions.Regex.Matches(token, "[a-z][A-Z][a-z]").Count >= 2 && !StartsWithJapaneseReading(token) || IsStylizedName(token)))
             return [new CompositionSegment(true, "", token)];
-        // 英字だけの入力は、全体を「日本語として読んだ場合」と「英語として読んだ場合」の点で比べても区切る (issue #838)。
-        // ただし、今までの決まりの結果より良くなる見込みがあるときだけ使う (既に正しい区切りを崩さない)。
-        if (!kanaInput && ReadingComparison && token.All(char.IsAsciiLetter))
-        {
-            var baseline = FindSpans(units, pending, precedingEnglish, followingEnglish, level, englishSentence && precedingEnglish == true, kanaInput: false, final);
-            if (FindSpansReading(units, pending, level, final, precedingEnglish, followingEnglish, englishSentence) is { } reading &&
-                ReadingComparisonIsBetter(reading, baseline, units, pending, level))
-                return reading;
-        }
         // A romaji token can cross an English boundary (reflect + sa becomes tsa).
         // Recognize an unambiguous English verb before parsing its Japanese conjugation.
         if (!kanaInput && level != DetectionLevel.Manual)
@@ -222,6 +213,12 @@ public sealed partial class CompositionDetector
         var segments = ScoredSegmentation && !kanaInput
             ? FindSpansScored(units, pending, precedingEnglish, followingEnglish, level, englishSentence && precedingEnglish == true, final)
             : FindSpans(units, pending, precedingEnglish, followingEnglish, level, englishSentence && precedingEnglish == true, kanaInput, final);
+        // 英字だけの入力は、全体を「日本語として読んだ場合」と「英語として読んだ場合」の点で比べても区切る (issue #838)。
+        // 今までの決まりの結果 (segments) をそのまま使い回し、良くなる見込みがあるときだけ走らせる。
+        if (!kanaInput && ReadingComparison && token.All(char.IsAsciiLetter) && ShouldTryReadingComparison(segments) &&
+            FindSpansReading(units, pending, level, final, precedingEnglish, followingEnglish, englishSentence) is { } reading &&
+            ReadingComparisonIsBetter(reading, segments, units, pending, level))
+            return reading;
         if (kanaInput) return segments;
         // 辞書にない英単語 (stackoverflow など) を最初から打っているなら全体を英語にする。
         // 途中の区間 (… flow) だけを英語にすると「sたcこvえrflow」のようになってしまう。
