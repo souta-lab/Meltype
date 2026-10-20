@@ -20,8 +20,10 @@ cache="${2:-}"
 commit="$(tr -d '[:space:]' < "$here/MOZC_COMMIT")"
 out="$here/bin/linux"
 ut_dictionary="${MELTYPE_UT_DICTIONARY:-}"
-# 統合する辞書のファイル (Mozc の git の管理下。統合の前に元に戻すのに使う)
-target_relative="src/data/dictionary_oss/dictionary00.txt"
+# Python は使う条件より前に決める (条件を変えたときに set -u で落ちないように)。
+python="${PYTHON:-python3}"
+# 前回の統合の記録。辞書を元に戻してよいかの判断にも使う。
+previous="$out/MOZC-UT.json"
 
 # src の有無ではなく .git で見る (GitHub Actions のキャッシュが src/third_party_cache だけを先に戻すため)。
 if [[ ! -d "$mozc/.git" ]]; then
@@ -37,23 +39,22 @@ src="$mozc/src"
 mkdir -p "$out"
 
 # 前に MELTYPE_UT_DICTIONARY を指定してビルドしていれば、Mozc の辞書に Mozc-UT の語が残っている。
-# 指定なしのビルドに混ざらないよう、先に元に戻す (辞書のファイルは Mozc の git から戻すので壊れない)。
-# git status が失敗したときに黙って続けると、Mozc-UT 入りのまま標準のヘルパーを作ってしまうので止める。
-dirty=""
-if ! dirty="$(git -C "$mozc" status --porcelain -- "$target_relative")"; then
-    echo "エラー: Mozc の辞書の状態を調べられませんでした ($mozc)。" >&2
-    echo "Mozc のフォルダーを消して、取り直してからやり直してください。" >&2
-    exit 1
-fi
-if [[ -n "$ut_dictionary" || -n "$dirty" || -e "$out/MOZC-UT.json" ]]; then
-    python="${PYTHON:-python3}"
+# 指定なしのビルドに混ざらないよう、先に元に戻す。
+# 前回の統合を取り消すのは、このスクリプトが統合したと分かるときだけにする。
+#   - これから統合する (MELTYPE_UT_DICTIONARY がある)
+#   - このフォルダーに前回の統合の記録 (MOZC-UT.json) がある
+# 記録が無いのに Mozc の辞書が変わっているのは、利用者が手元で変えたものなので触らない
+# (issue #961: 環境変数を指定していないのに辞書を戻してしまう、という報告)。
+if [[ -n "$ut_dictionary" || -e "$previous" ]]; then
     if ! command -v "$python" >/dev/null 2>&1; then
         echo "エラー: Python 3.10 以降が見つかりません ($python)。Mozc-UT の辞書の統合に使います。" >&2
         exit 1
     fi
-    "$python" "$here/merge-ut-dictionary.py" --mozc-src "$src" --restore
-    if [[ -n "$dirty" ]]; then
-        echo "前回統合した Mozc-UT の辞書を取り消しました。"
+    # 手元で書き換えた辞書は消さない (記録と中身が違えば、統合スクリプトが中止する)。
+    if ! "$python" "$here/merge-ut-dictionary.py" --mozc-src "$src" --restore --state "$previous"; then
+        echo "エラー: Mozc の辞書を、統合する前の状態に戻せませんでした。" >&2
+        echo "手元で書き換えた辞書を消さないように中止しています (issue #961)。" >&2
+        exit 1
     fi
 fi
 

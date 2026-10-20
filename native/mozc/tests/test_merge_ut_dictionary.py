@@ -170,12 +170,14 @@ class MergeTest(MergeTestBase):
         self.assertEqual(keys, sorted(keys))
 
     def test_merging_twice_does_not_duplicate(self):
-        first = self.merge(SAMPLE)
+        # 2 回目は、1 回目の記録 (--report) を前回の統合として渡す。ビルドスクリプトと同じ形。
+        report = self.temp / "MOZC-UT.json"
+        first = self.merge(SAMPLE, "--report", str(report))
         self.assertEqual(first.returncode, 0, first.stderr)
         after_first = self.mozc.target_sha()
         count_after_first = len(self.mozc.target_lines())
 
-        second = self.merge(SAMPLE)
+        second = self.merge(SAMPLE, "--report", str(report))
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertEqual(self.mozc.target_sha(), after_first)
         self.assertEqual(len(self.mozc.target_lines()), count_after_first)
@@ -184,13 +186,60 @@ class MergeTest(MergeTestBase):
 
     def test_restore_undoes_merge(self):
         original = self.mozc.target_sha()
-        self.assertEqual(self.merge(SAMPLE).returncode, 0)
+        report = self.temp / "MOZC-UT.json"
+        self.assertEqual(self.merge(SAMPLE, "--report", str(report)).returncode, 0)
         self.assertNotEqual(self.mozc.target_sha(), original)
 
-        restored = self.run_script("--restore")
+        restored = self.run_script("--restore", "--state", str(report))
         self.assertEqual(restored.returncode, 0, restored.stderr)
         self.assertEqual(self.mozc.target_sha(), original)
         self.assertIn("取り消しました", restored.stdout)
+
+    def test_restore_does_not_touch_changes_made_outside_the_tool(self):
+        # issue #961: MELTYPE_UT_DICTIONARY を指定していないのに、手元で書き換えた
+        # dictionary00.txt を Mozc の git の状態に戻してしまう、という報告。
+        # 統合の記録が無い辞書は、このツールが変えたものではないので触らない。
+        self.mozc.write_target("".join([BASE_LINE, "じかせい\t1851\t1851\t5000\tジカセイ\n"]))
+        before = self.mozc.target_sha()
+        result = self.run_script("--restore")
+        self.assertNotEqual(result.returncode, 0, "黙って戻してはいけない")
+        self.assertEqual(self.mozc.target_sha(), before, "手元の辞書を消さない")
+        self.assertIn("やめました", result.stderr)
+
+    def test_restore_with_state_undoes_our_merge(self):
+        # このツールの統合結果 (記録のハッシュと一致) なら、今までどおり戻せる。
+        original = self.mozc.target_sha()
+        report = self.temp / "MOZC-UT.json"
+        self.assertEqual(self.merge(SAMPLE, "--report", str(report)).returncode, 0)
+        restored = self.run_script("--restore", "--state", str(report))
+        self.assertEqual(restored.returncode, 0, restored.stderr)
+        self.assertEqual(self.mozc.target_sha(), original)
+        self.assertIn("取り消しました", restored.stdout)
+
+    def test_restore_refuses_when_edited_after_our_merge(self):
+        # 統合したあとに手元で書き換えた辞書も消さない。
+        report = self.temp / "MOZC-UT.json"
+        self.assertEqual(self.merge(SAMPLE, "--report", str(report)).returncode, 0)
+        self.mozc.write_target("".join(self.mozc.target_lines()) + "じかせい\t1851\t1851\t5000\tジカセイ\n")
+        before = self.mozc.target_sha()
+        result = self.run_script("--restore", "--state", str(report))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.mozc.target_sha(), before)
+
+    def test_restore_force_undoes_foreign_changes(self):
+        self.mozc.write_target("".join([BASE_LINE, "じかせい\t1851\t1851\t5000\tジカセイ\n"]))
+        result = self.run_script("--restore", "--force")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.mozc.target_lines(), [BASE_LINE.strip()])
+
+    def test_merge_refuses_to_append_to_foreign_changes(self):
+        # 手元で書き換えた辞書に、黙って Mozc-UT を足さない (戻すときに消えてしまうため)。
+        self.mozc.write_target("".join([BASE_LINE, "じかせい\t1851\t1851\t5000\tジカセイ\n"]))
+        before = self.mozc.target_sha()
+        result = self.merge(SAMPLE)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("やめました", result.stderr)
+        self.assertEqual(self.mozc.target_sha(), before)
 
     def test_restore_when_clean_does_nothing(self):
         result = self.run_script("--restore")
@@ -249,9 +298,10 @@ class MergeTest(MergeTestBase):
     def test_staged_merge_is_restored_from_head(self):
         # 統合した辞書を git の index に載せてから、もう一度統合する。
         # index から戻すと統合済みの中身が戻って重複するので、HEAD から戻すことを確かめる。
-        self.assertEqual(self.merge(SAMPLE).returncode, 0)
+        report = self.temp / "MOZC-UT.json"
+        self.assertEqual(self.merge(SAMPLE, "--report", str(report)).returncode, 0)
         git(self.mozc.root, "add", "src/data/dictionary_oss/dictionary00.txt", check=True)
-        result = self.merge(SAMPLE)
+        result = self.merge(SAMPLE, "--report", str(report))
         self.assertEqual(result.returncode, 0, result.stderr)
         lines = self.mozc.target_lines()
         self.assertEqual(len(lines), 1 + 4)

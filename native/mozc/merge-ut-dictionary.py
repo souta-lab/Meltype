@@ -402,8 +402,32 @@ def remove_duplicates(entries: list[Entry],
     return kept, in_ut, in_mozc
 
 
-def restore_dictionary(mozc_src: Path, target: Path) -> bool:
-    """統合した辞書を、Mozc を取得したときの状態に戻す。戻したら True。"""
+def recorded_target_sha(state: Path | None) -> str | None:
+    """前回このツールが統合した辞書のハッシュ (MOZC-UT.json の result.target_sha256)。"""
+    if state is None:
+        return None
+    try:
+        data = json.loads(state.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    result = data.get("result")
+    if not isinstance(result, dict):
+        return None
+    value = result.get("target_sha256")
+    if not isinstance(value, str) or len(value) != 64:
+        return None
+    return value.lower()
+
+
+def restore_dictionary(
+    mozc_src: Path, target: Path, *, state: Path | None = None, force: bool = False
+) -> bool:
+    """統合した辞書を、Mozc を取得したときの状態に戻す。戻したら True。
+
+    手元で書き換えた辞書を消さないため、戻すのは「このツールが統合した」と
+    確かめられるとき (state に記録したハッシュと中身が一致するとき) だけにする。
+    force を指定したときは、その確認をせずに戻す。
+    """
     root = mozc_src.parent
     relative = target.relative_to(root).as_posix()
     if not (root / ".git").exists():
@@ -424,6 +448,16 @@ def restore_dictionary(mozc_src: Path, target: Path) -> bool:
         return False
     if target.stat().st_size == 0:
         raise MergeError(f"{target} が空です。Mozc を取得し直してください。")
+    if not force and recorded_target_sha(state) != sha256_of(target):
+        raise MergeError(
+            f"{relative} が、このツールが統合したときの中身と違います。\n"
+            "手元で書き換えた辞書を消さないため、元に戻すのをやめました。\n"
+            f"  - Mozc の辞書: {target}\n"
+            f"  - 前回の統合の記録: {state if state is not None else '(指定なし)'}\n"
+            "元に戻す方法は、次のどちらかです。\n"
+            f"  - 自分で戻す: git -C {root} checkout HEAD -- {relative}\n"
+            "  - 消してよいと分かっているとき: --force を付ける"
+        )
     # `git checkout -- <path>` は index から戻すので、統合したあとに add されていると
     # 統合済みの中身が戻ってしまう。必ず HEAD (最後のコミット) から戻す。
     checkout = run_git(root, "checkout", "HEAD", "--", relative)
@@ -534,6 +568,14 @@ def main(argv: list[str]) -> int:
         help="統合した内容 (辞書と Mozc のハッシュなど) を JSON で書き出す",
     )
     parser.add_argument(
+        "--state", type=Path,
+        help="前回の統合の記録 (MOZC-UT.json)。統合を取り消してよいかの確認に使う",
+    )
+    parser.add_argument(
+        "--force", action="store_true",
+        help="統合の記録と中身が違っても、辞書を Mozc の git の状態に戻す",
+    )
+    parser.add_argument(
         "--pos", default=DEFAULT_POS,
         help=f"UT の語に付ける品詞 (既定: {DEFAULT_POS})",
     )
@@ -548,6 +590,8 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--quiet", action="store_true", help="--check の一覧を出さない")
     args = parser.parse_args(argv)
 
+    # 前回の統合の記録は --state が基本。省略したときは --report (同じ場所に書く) を見る。
+    state = args.state or args.report
     mozc_src = args.mozc_src.expanduser().resolve()
     target = (mozc_src / TARGET_RELATIVE)
     if not (mozc_src / "data" / "dictionary_oss").is_dir():
@@ -559,7 +603,9 @@ def main(argv: list[str]) -> int:
     if args.restore:
         if args.dictionary:
             raise MergeError("--restore と --dictionary は同時に指定できません。")
-        restored = restore_dictionary(mozc_src, target)
+        restored = restore_dictionary(
+            mozc_src, target, state=state, force=args.force
+        )
         print(
             "統合した Mozc-UT の辞書を取り消しました。"
             if restored else "Mozc の辞書は統合する前の状態のままです。"
@@ -579,7 +625,9 @@ def main(argv: list[str]) -> int:
     )
 
     # 統合した辞書が残っていれば、まず元に戻す (繰り返しても増えないように)。
-    undone = False if args.check else restore_dictionary(mozc_src, target)
+    undone = False if args.check else restore_dictionary(
+        mozc_src, target, state=state, force=args.force
+    )
 
     existing, before_lines = read_mozc_entries(mozc_src, target)
     kept, in_ut, in_mozc = remove_duplicates(result.entries, existing)

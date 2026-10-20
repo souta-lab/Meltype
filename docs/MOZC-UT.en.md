@@ -122,10 +122,12 @@ Remove-Item Env:\MELTYPE_UT_DICTIONARY
 ```
 
 The previous merge is undone before the build (`dictionary00.txt` is restored from Mozc's git), so no UT words remain.
+Only a dictionary merged by this script is undone. A `dictionary00.txt` you edited yourself is left alone (see "Known limitations" below).
 To undo it by hand:
 
 ```bash
-python3 native/mozc/merge-ut-dictionary.py --mozc-src ~/mozc/src --restore
+python3 native/mozc/merge-ut-dictionary.py --mozc-src ~/mozc/src --restore \
+  --state native/mozc/bin/linux/MOZC-UT.json
 ```
 
 ## Performance and size (measured)
@@ -180,6 +182,7 @@ python3 native/mozc/merge-ut-dictionary.py --mozc-src ~/mozc/src \
 
 - **Only the Mozc engine** is affected (the Windows/Linux `meltype_mozc_helper`). The macOS build uses azooKey.
 - The UT dictionary is added to Mozc at build time, so switching dictionaries requires rebuilding the helper (re-embedding the dictionary). Bazel's cache makes later builds take a few minutes.
-- `dictionary00.txt` is tracked by Mozc's git, and it is always restored before merging. If you edited it locally, that edit is lost (treat the Mozc checkout as a build input).
+- Only a dictionary that this script merged is undone: the hash recorded in `MOZC-UT.json` must match the current `dictionary00.txt`. If you edited `dictionary00.txt` yourself, that edit is left alone.
+- If `dictionary00.txt` differs but there is no merge record (a locally customised dictionary), both merging and restoring **stop and leave the dictionary as it is** (issue #961). Restore it yourself, or pass `--force` when you know it is safe to discard.
 - Candidate quality and ordering come from the UT dictionary; Meltype neither reorders nor filters it.
 - Licenses differ per dictionary. In particular, **do not use a dictionary that includes alt-cannadic (GPL-2.0-only)**.

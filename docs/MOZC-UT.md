@@ -122,10 +122,12 @@ Remove-Item Env:\MELTYPE_UT_DICTIONARY
 ```
 
 前回統合した辞書は、ビルドの前に自動で取り消します (`dictionary00.txt` を Mozc の git から戻します)。
+取り消すのは、このスクリプトが統合した辞書だけです。手元で書き換えた `dictionary00.txt` は消しません (下の「既知の制約」を参照してください)。
 手動で取り消すときは次を実行します。
 
 ```bash
-python3 native/mozc/merge-ut-dictionary.py --mozc-src ~/mozc/src --restore
+python3 native/mozc/merge-ut-dictionary.py --mozc-src ~/mozc/src --restore \
+  --state native/mozc/bin/linux/MOZC-UT.json
 ```
 
 ## 性能とサイズ (実測)
@@ -183,6 +185,7 @@ python3 native/mozc/merge-ut-dictionary.py --mozc-src ~/mozc/src \
 
 - **Mozc の変換エンジンだけ**が対象です (Windows・Linux の `meltype_mozc_helper`)。Mac 版は azooKey なので対象外です。
 - UT 辞書はビルド時に Mozc の辞書へ足す方式です。辞書を切り替えるたびにヘルパーのビルド (辞書の組み込み直し) が要ります。ビルドのキャッシュが効くので、2 回目以降は数分です。
-- `dictionary00.txt` は Mozc の git の管理下のファイルなので、統合する前に**必ず元に戻します**。手元で `dictionary00.txt` を書き換えて使っている場合は、その変更は消えます (Mozc はビルド用の取得物として扱ってください)。
+- 統合を取り消すのは、**このスクリプトが統合したと確かめられるときだけ**です (前回の統合の記録 `MOZC-UT.json` に書いたハッシュと、いまの `dictionary00.txt` が一致するとき)。手元で `dictionary00.txt` を書き換えて使っている場合、その変更は消しません。
+- 記録が無いのに `dictionary00.txt` が変わっているとき (手元でカスタムした場合) は、統合も取り消しも**中止して、辞書をそのまま残します** (issue #961)。自分で戻すか、消してよいと分かっているときは `--force` を付けてください。
 - UT 辞書の品質 (候補の順位・表記) は UT 側のものです。Meltype は並べ替えも選別もしません。
 - 辞書のライセンスは辞書ごとに違います。とくに **alt-cannadic (GPL-2.0 のみ) を含む辞書は使わないでください**。
