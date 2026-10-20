@@ -29,13 +29,6 @@ internal static class ReadingComparisonTests
         }
     }
 
-    private static string SegmentsOf(string typed)
-    {
-        var text = new CompositionText(CompositionTests.Detector);
-        foreach (var c in typed) text.Append(c);
-        return string.Join("|", text.Segments(final: true).Select(s => (s.IsEnglish ? "EN:" : "JA:") + s.Raw));
-    }
-
     [Test]
     public static void Beta_FixesWordsWhoseSplitCrossesAUnit()
     {
@@ -91,6 +84,8 @@ internal static class ReadingComparisonTests
         var text = new CompositionText(CompositionTests.Detector);
         foreach (var c in "printenv") text.Append(c);
         var before = string.Join("|", text.Segments(final: true).Select(s => (s.IsEnglish ? "EN:" : "JA:") + s.Raw));
+        // テストの前の値に必ず戻す (共有の Detector を他のテストと取り合わない)
+        var previous = CompositionTests.Detector.UseReadingComparison;
         try
         {
             CompositionTests.Detector.UseReadingComparison = () => true;
@@ -100,7 +95,7 @@ internal static class ReadingComparisonTests
         }
         finally
         {
-            CompositionTests.Detector.UseReadingComparison = null;
+            CompositionTests.Detector.UseReadingComparison = previous;
         }
     }
 

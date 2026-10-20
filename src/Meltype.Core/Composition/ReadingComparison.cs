@@ -33,6 +33,13 @@ public sealed partial class CompositionDetector
 
     private bool ReadingComparison => ReadingByEnvironment || UseReadingComparison?.Invoke() == true;
 
+    // 打鍵のたびに同じ部分文字列 (print・te・en …) を計算し直さないよう、呼び出しをまたいで覚えておく。
+    // 英単語の点は学習 (LanguageMemory) で変わるので、学習の版が変わったら捨てる。
+    private readonly Dictionary<string, double> _readingEnglishCosts = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (bool Usable, string Kana, ReadingKind Kind, double Cost)> _readingJapaneseTokens =
+        new(StringComparer.Ordinal);
+    private int _readingCacheVersion = -1;
+
     /// <summary>この決め方が有効か (区間の控えのキーに使う)。</summary>
     internal bool ReadingComparisonEnabled => ReadingComparison;
 
@@ -67,8 +74,8 @@ public sealed partial class CompositionDetector
     private static readonly double EnglishAdjacentCost = ReadingWeight("ADJACENT", 1.0);
     /// <summary>前が英語 (英文の続き) のときの英語の後押し。</summary>
     private static readonly double ReadingContextBonus = ReadingWeight("CONTEXT", 1.0);
-    /// <summary>点数で比べる入力の長さの上限 (これを超える英文は今までの決まりに任せる)。</summary>
-    private const int MaxReadingLength = 32;
+    /// <summary>1 つの区間として見る英字の長さの上限 (長い英文を 1 語として扱わない)。</summary>
+    private const int MaxEnglishSpan = 24;
 
     /// <summary>区切りの種類。点を比べるときの「直前が何だったか」。</summary>
     private enum ReadingKind
@@ -146,10 +153,15 @@ public sealed partial class CompositionDetector
         if (units.Count == 0) return null;
         var letters = Raw(units, 0, units.Count) + pending;
         if (letters.Length < 2 || !letters.All(char.IsAsciiLetter)) return null;
+        var memoryVersion = Memory?.Version ?? -1;
+        if (memoryVersion != _readingCacheVersion)
+        {
+            _readingCacheVersion = memoryVersion;
+            _readingEnglishCosts.Clear();
+            _readingJapaneseTokens.Clear();
+        }
 
         var length = letters.Length;
-        // 長い入力 (英文など) は今までの決まりで足りることが多いので、点数では比べない
-        if (length > MaxReadingLength) return null;
         // 4 文字以下で、ローマ字として最後まで読めて、英単語として知られていない綴りは日本語 (fa → ふぁ、je → じぇ、kwo → くぉ)
         if (length <= 4)
         {
@@ -199,40 +211,56 @@ public sealed partial class CompositionDetector
                 {
                     var raw = letters[i..j];
                     var lower = raw.ToLowerInvariant();
-                    var hasUpper = raw.Any(char.IsAsciiLetterUpper);
                     // 大文字を含む区間は日本語にしない (英単語・固有名詞・略語)
-                    if (!hasUpper)
+                    if (!raw.Any(char.IsAsciiLetterUpper))
                     {
                         if (!japaneseTokens.TryGetValue((i, j), out var token))
                         {
-                            // 語末の ん (zenzen・hon) は、ローマ字の解析では Partial が "n" になる。
-                            // 1 つの日本語の語として読めるようにする (でないと zen が英単語として扱われる)。
-                            var analysis = _romaji.AnalyzeFragment(lower);
-                            var partialN = analysis.IsValid && analysis.Partial == "n" && analysis.Kana.Length > 0 &&
-                                (j == length || (letters[j] is not ('a' or 'i' or 'u' or 'e' or 'o' or 'y') &&
-                                                 _romaji.Analyze(letters[j..]).IsValid));
-                            token = (false, "", ReadingKind.JapaneseWord, 0);
-                            if (analysis.IsValid && analysis.Kana.Length > 0 && (analysis.Partial.Length == 0 || partialN))
+                            if (_readingJapaneseTokens.TryGetValue(lower, out var cachedToken))
                             {
-                                var fullKana = partialN ? analysis.Kana + "ん" : analysis.Kana;
-                                var isParticle = Meltype.Detection.DictionaryDetector.StartsWithParticle(lower) == lower;
-                                var isSuru = IsSuruForm(fullKana);
-                                // 日本語の語か: ローマ字見出しの辞書 (japanese.txt) と、よく使う語の読み (readings.txt、約 2 万語)
-                                var isWord = _japanese.Words.ContainsWord(lower) || CommonReadings.Words.Contains(fullKana);
-                                var next = isParticle || isSuru ? ReadingKind.JapaneseParticle : ReadingKind.JapaneseWord;
-                                var cost = isParticle ? JapaneseParticleCost
-                                    : isSuru && fullKana.Length <= 4 ? JapaneseParticleCost
-                                    : isWord ? (fullKana.Length == 1 ? JapaneseSingleCharCost : JapaneseWordCost)
-                                    : KanaCost(fullKana);
-                                // 末尾の ん は表示側 (RenderSegments) が付けるので、語の読みからは外す
-                                token = (true, partialN && j == length ? analysis.Kana : fullKana, next, cost);
+                                // 位置に依らない区間だけを覚えている (語末の ん は位置で変わるので入れない)
+                                token = cachedToken;
+                            }
+                            else
+                            {
+                                // 語末の ん (zenzen・hon) は、ローマ字の解析では Partial が "n" になる。
+                                // 1 つの日本語の語として読めるようにする (でないと zen が英単語として扱われる)。
+                                var analysis = _romaji.AnalyzeFragment(lower);
+                                var partialN = analysis.IsValid && analysis.Partial == "n" && analysis.Kana.Length > 0 &&
+                                    (j == length || (letters[j] is not ('a' or 'i' or 'u' or 'e' or 'o' or 'y') &&
+                                                     _romaji.Analyze(letters[j..]).IsValid));
+                                token = (false, "", ReadingKind.JapaneseWord, 0);
+                                if (analysis.IsValid && analysis.Kana.Length > 0 && (analysis.Partial.Length == 0 || partialN))
+                                {
+                                    var fullKana = partialN ? analysis.Kana + "ん" : analysis.Kana;
+                                    var isParticle = Meltype.Detection.DictionaryDetector.StartsWithParticle(lower) == lower;
+                                    var isSuru = IsSuruForm(fullKana);
+                                    // 日本語の語か: ローマ字見出しの辞書 (japanese.txt) と、よく使う語の読み (readings.txt、約 2 万語)
+                                    var isWord = _japanese.Words.ContainsWord(lower) || CommonReadings.Words.Contains(fullKana);
+                                    var next = isParticle || isSuru ? ReadingKind.JapaneseParticle : ReadingKind.JapaneseWord;
+                                    var cost = isParticle ? JapaneseParticleCost
+                                        : isSuru && fullKana.Length <= 4 ? JapaneseParticleCost
+                                        : isWord ? (fullKana.Length == 1 ? JapaneseSingleCharCost : JapaneseWordCost)
+                                        : KanaCost(fullKana);
+                                    // 末尾の ん は表示側 (RenderSegments) が付けるので、語の読みからは外す
+                                    token = (true, partialN && j == length ? analysis.Kana : fullKana, next, cost);
+                                    // 次の打鍵でも使い回せるのは、位置に依らない区間だけ
+                                    if (!partialN) _readingJapaneseTokens[lower] = token;
+                                }
                             }
                             japaneseTokens[(i, j)] = token;
                         }
                         if (token.Usable)
                             Offer(i, kind, j, token.Kind, token.Cost + SwitchCost((ReadingKind)kind, token.Kind), token.Kana);
                     }
-                    if (!englishScores.TryGetValue((i, j), out var englishBase)) englishScores[(i, j)] = englishBase = EnglishCost(lower, raw);
+                    // 長すぎる英字の並びは 1 語として扱わない (長い英文で候補が増えすぎるのを防ぐ)
+                    if (j - i > MaxEnglishSpan) continue;
+                    if (!englishScores.TryGetValue((i, j), out var englishBase))
+                    {
+                        if (!_readingEnglishCosts.TryGetValue(lower, out englishBase))
+                            _readingEnglishCosts[lower] = englishBase = EnglishCost(lower, raw);
+                        englishScores[(i, j)] = englishBase;
+                    }
                     var englishCost = englishBase + SwitchCost((ReadingKind)kind, ReadingKind.English)
                         - (i == 0 ? contextBonus : 0) - (j == length ? endingBonus : 0);
                     Offer(i, kind, j, ReadingKind.English, englishCost, null);
@@ -269,9 +297,6 @@ public sealed partial class CompositionDetector
             if (token.Raw.Any(char.IsAsciiLetterUpper) && !token.Raw.All(char.IsAsciiLetterUpper) &&
                 !IsListedEnglishWord(tokenLower) && !_proper.Contains(tokenLower)) return null;
         }
-        if (Environment.GetEnvironmentVariable("MELTYPE_READING_DEBUG") == "1")
-            Console.Error.WriteLine($"[reading] {letters} cost={best[length, endKind]:0.###} " +
-                string.Join(" | ", tokens.Select(t => (t.English ? "EN:" : "JA:") + t.Raw)));
 
         // 日本語どうし・英語どうしは 1 つの区間にする
         var segments = new List<CompositionSegment>();
@@ -308,6 +333,10 @@ public sealed partial class CompositionDetector
         return segments;
     }
 
+    /// <summary>区間を表示したときに英字のまま残る文字の数。</summary>
+    private static int RenderedLetters(List<CompositionSegment> segments) =>
+        segments.Sum(segment => (segment.IsEnglish ? segment.Raw : segment.Kana).Count(char.IsAsciiLetter));
+
     /// <summary>
     /// この決め方の結果が、今までの決まりの結果より良いか。
     /// 次のどちらかのときだけ使う (既に正しい区切りを崩さないため):
@@ -323,6 +352,9 @@ public sealed partial class CompositionDetector
         foreach (var segment in reading.Where(segment => segment.IsEnglish))
             if (Memory?.Get(segment.Raw.ToLowerInvariant()) == false) return false;
         if (reading.Count == 0 || !reading.Any(segment => segment.IsEnglish)) return false;
+        // 今までの決まりより英字をかなに変える区切りは採らない
+        // (trackutalkko を trackうtalkこ にしない。英字のまま残る文字の数で比べる)
+        if (RenderedLetters(reading) < RenderedLetters(baseline)) return false;
         // 今までの決まりが、日本語の区間の中に英字を残している = 明らかに崩れている。
         // ただし、それだけで新しい決め方を使うと、大文字で始まる語 (Tokyo) のような
         // わざと英字を残す区切りまで崩すので、入力全体が 1 つの英単語になる場合だけにする。
@@ -333,7 +365,15 @@ public sealed partial class CompositionDetector
             // 既定で既に大半が英語なら、その区切り (rds と redshift) のほうが自然なので触らない
             var total = baseline.Sum(segment => segment.Raw.Length);
             var english = baseline.Where(segment => segment.IsEnglish).Sum(segment => segment.Raw.Length);
-            if (total == 0 || english * 10 < total * 8) return true;
+            if (total == 0 || english * 10 < total * 8)
+            {
+                // 入力の始まりと終わりが「かなとして読めない英字」のときだけ、全体を英語にする。
+                // 始まりがかな (aprintenv) や、終わりがかな (printenva) なら、その日本語を英語に吸収しない。
+                var japanese = baseline.Where(segment => !segment.IsEnglish).Select(segment => segment.Kana).Where(kana => kana.Length > 0).ToList();
+                // 末尾の打ちかけの子音 (printenv の v) は区間に入らず pending に残るので、そちらも見る
+                var lastChar = pending.Length > 0 ? pending[^1] : japanese.Count > 0 ? japanese[^1][^1] : '\0';
+                if (japanese.Count > 0 && char.IsAsciiLetter(japanese[0][0]) && char.IsAsciiLetter(lastChar)) return true;
+            }
         }
         // キーの単位をまたいで分かれている = 今までの決まりでは表せない区切り
         var boundaries = new HashSet<int> { 0 };
