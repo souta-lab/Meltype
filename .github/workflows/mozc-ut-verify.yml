@@ -1,0 +1,72 @@
+# Mozc-UT の辞書を統合した変換ヘルパーが、Windows と Linux の両方でビルドでき、
+# 統合した語が変換の候補に出るかを確かめる (手動で流す。このファイルは確認用で、Pull Request には含めない)。
+name: mozc-ut-verify
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Packages (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld pkg-config zlib1g-dev
+      - name: Bazelisk
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Linux) asset=bazelisk-linux-amd64; sha=5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992 ;;
+            Windows) asset=bazelisk-windows-amd64.exe; sha=092a8738d5b41aae7a85c42cc961b1034e3389aba43ffc20c0fabda7b43e095b ;;
+          esac
+          mkdir -p "$HOME/tools"
+          curl -fsSL -o "$HOME/tools/$asset" "https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/$asset"
+          echo "$sha  $HOME/tools/$asset" | sha256sum -c -
+          chmod +x "$HOME/tools/$asset"
+      - name: Prepare a small Mozc-UT dictionary
+        shell: bash
+        run: |
+          printf 'あるぴにすとけんきゅうしゃ\t1851\t1851\t7000\tアルピニスト研究者\n' > "$RUNNER_TEMP/mozcdic-ut.txt"
+          echo "MELTYPE_UT_DICTIONARY=$RUNNER_TEMP/mozcdic-ut.txt" >> "$GITHUB_ENV"
+          cat "$RUNNER_TEMP/mozcdic-ut.txt"
+      - name: Build helper with Mozc-UT (Linux)
+        if: runner.os == 'Linux'
+        run: BAZEL="$HOME/tools/bazelisk-linux-amd64" native/mozc/build-mozc-helper.sh "$HOME/mozc" "$HOME/bazel-cache"
+      - name: Build helper with Mozc-UT (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./native/mozc/Build-MozcHelper.ps1 -MozcSource "$env:RUNNER_TEMP\mozc" -Python python `
+            -Bazelisk "$HOME\tools\bazelisk-windows-amd64.exe" -DiskCache 'C:\bazel-cache'
+      - name: Check the candidates (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/profile"
+          out="$(printf 'C\t\tあるぴにすとけんきゅうしゃ\nQ\n' | native/mozc/bin/linux/meltype_mozc_helper "$RUNNER_TEMP/profile")"
+          echo "$out"
+          echo "$out" | grep -q 'アルピニスト研究者' || { echo 'Mozc-UT の語が候補にありません'; exit 1; }
+          cat native/mozc/bin/linux/MOZC-UT.json
+      - name: Check the candidates (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/profile"
+          out="$(printf 'C\t\tあるぴにすとけんきゅうしゃ\nQ\n' | native/mozc/bin/meltype_mozc_helper.exe "$RUNNER_TEMP/profile")"
+          echo "$out"
+          echo "$out" | grep -q 'アルピニスト研究者' || { echo 'Mozc-UT の語が候補にありません'; exit 1; }
+          cat native/mozc/bin/MOZC-UT.json
