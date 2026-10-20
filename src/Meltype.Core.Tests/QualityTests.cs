@@ -239,6 +239,12 @@ internal static class Quality
         new("綴り", "xa", "ぁ"),
         new("綴り", "la", "ぁ"),
         new("綴り", "mala", "まぁ"),
+        // 報告のあった入力 (issue #960・#920・#852・#918)
+        new("綴り", "kwo", "くぉ"),
+        new("綴り", "kwo-to", "くぉーと"),
+        new("カタカナ語", "karenda-", "かれんだー"),
+        new("英語", "image", "image"),
+        new("英語", "pure", "pure"),
         new("綴り", "ltu", "っ"),
         new("綴り", "moraltute", "もらって"),
         new("綴り", "moraltsute", "もらって"),
