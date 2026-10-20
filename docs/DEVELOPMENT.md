@@ -98,6 +98,8 @@ Windows のアプリ本体は GUI アプリ (WinExe) なので、cmd では版�
 コンソールアプリ (Exe) にすると、エクスプローラーやタスク スケジューラから起動したときにコンソールの窓が一瞬フォーカスを取り、その間に打ったキーが消えるので、WinExe のままにしています。
 
 環境変数 `MELTYPE_SCORED=1` を付けると、区切りを点数で選ぶ α版 (設定「区切りを点数で選ぶ (α版)」、`ScoredSegmentation.cs`) で動かせます。
+
+環境変数 `MELTYPE_READING=1` を付けると、英字だけの入力を「日本語として読んだ場合」と「英語として読んだ場合」の点で比べて区切る β版 (設定「日英の区切りを読んだ点数で決める (β版)」、`ReadingComparison.cs`) で動かせます。issue #838 の提案の実装で、既定は OFF です。単体テスト 550/550・品質テスト 1345/1346・`--mixed-bench` 528/554 (既定 523) で、`printenv`・`doomscroll`・`main` に `push` する のような、キーの単位をまたぐ英単語の誤りが直ります。
 今までの区切りと比べるときは、同じコマンドを `MELTYPE_SCORED=0` と `1` で 2 回動かします。`--mixed-bench` は `MELTYPE_BENCH_OFFSET=31` などで調べる語を変えられます。
 
 機能を足す前と後で変換エンジンの速さ・精度を比べるときは、両方の版で `--perf` を動かして `--perf-compare 前.json 後.json` で比べます。測る項目と比べ方は [tools/performance](../tools/performance/README.md) にあります。

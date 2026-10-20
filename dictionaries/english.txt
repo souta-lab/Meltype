@@ -254,3 +254,4 @@ docs
 
 # Issue #887
 exe
+redshift
