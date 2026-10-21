@@ -20,6 +20,10 @@ cache="${2:-}"
 commit="$(tr -d '[:space:]' < "$here/MOZC_COMMIT")"
 out="$here/bin/linux"
 ut_dictionary="${MELTYPE_UT_DICTIONARY:-}"
+# Python は使う条件より前に決める (条件を変えたときに set -u で落ちないように)。
+python="${PYTHON:-python3}"
+# 前回の統合の記録 (前の版で統合したかを確かめるのにも使う)
+previous="$out/MOZC-UT.json"
 
 # src の有無ではなく .git で見る (GitHub Actions のキャッシュが src/third_party_cache だけを先に戻すため)。
 if [[ ! -d "$mozc/.git" ]]; then
@@ -33,6 +37,21 @@ fi
 src="$mozc/src"
 
 mkdir -p "$out"
+
+# 前の版 (1.3.1-pre.1 まで) で Mozc-UT を統合した Mozc の辞書00 は、初回だけ元に戻す。
+# この版からは Mozc の辞書00 を書き換えないので、古い語が残ると UT を指定しないビルドにも混ざる。
+# 記録 (MOZC-UT.json) の中身とハッシュが一致するときだけ戻す (手元で書き換えた辞書は消さない)。
+if [[ -e "$previous" ]]; then
+    if ! command -v "$python" >/dev/null 2>&1; then
+        echo "エラー: Python 3.10 以降が見つかりません ($python)。前の版の Mozc-UT の語を取り除くのに使います。" >&2
+        echo "Mozc の辞書00 を自分で戻す場合は、git -C $mozc checkout HEAD -- src/data/dictionary_oss/dictionary00.txt を実行してください。" >&2
+        exit 1
+    fi
+    if ! "$python" "$here/merge-ut-dictionary.py" --mozc-src "$src" --migrate --state "$previous"; then
+        echo "エラー: 前の版で統合した Mozc-UT の語を、Mozc の辞書から取り除けませんでした。" >&2
+        exit 1
+    fi
+fi
 
 # Mozc-UT の語は Mozc の辞書とは別の dictionary_ut.txt に置き、ビルドのたびに作り直す
 # (Mozc の辞書は書き換えないので、手元で書き換えた辞書も残る)。

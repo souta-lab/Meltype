@@ -123,6 +123,22 @@ Remove-Item Env:\MELTYPE_UT_DICTIONARY
 
 A build without the variable empties the file that holds the UT words (`dictionary_ut.txt`) before building, so no UT words remain.
 
+## Updating from 1.3.1-pre.1 or earlier
+
+Up to 1.3.1-pre.1 the UT words were appended to Mozc's own dictionary (`dictionary00.txt`). From this version they live in a separate file (`dictionary_ut.txt`), so **words merged by an older build stay in Mozc's dictionary**.
+
+If you built with the old version and still have `native/mozc/bin/linux/MOZC-UT.json` (Windows: `native\mozc\bin\windows\MOZC-UT.json`), the next build removes them automatically (only when the recorded hash matches the file, so a dictionary you edited yourself is left alone).
+
+If there is no record, or the hash does not match, restore it yourself:
+
+```bash
+git -C ~/mozc checkout HEAD -- src/data/dictionary_oss/dictionary00.txt
+```
+
+Building without restoring still works, but the old UT words stay in the dictionary.
+
+A Mozc folder without `.git` (a copy distributed as a folder) cannot be cleaned this way; fetch Mozc again.
+
 ## Performance and size (measured)
 
 Measured on Linux x86_64 (6 cores, clang 21.1.8, Bazel 9.0.2, Mozc `a069a88d`) with `personal_names`, `place_names` and `sudachidict` merged (1,142,950 entries).

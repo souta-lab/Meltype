@@ -123,6 +123,22 @@ Remove-Item Env:\MELTYPE_UT_DICTIONARY
 
 環境変数を指定しないビルドでは、Mozc-UT の語を入れるファイル (`dictionary_ut.txt`) を空にしてからビルドするので、前回の語は残りません。
 
+## 前の版 (1.3.1-pre.1 まで) から更新するとき
+
+1.3.1-pre.1 までは、Mozc-UT の語を Mozc の辞書 (`dictionary00.txt`) に直接足していました。この版からは別のファイル (`dictionary_ut.txt`) に置くので、**前の版で統合した語は Mozc の辞書に残ったまま**になります。
+
+前の版でビルドしていて、`native/mozc/bin/linux/MOZC-UT.json` (Windows は `native\mozc\bin\windows\MOZC-UT.json`) が残っている場合は、次のビルドで自動的に取り除きます (記録と辞書の中身が一致するときだけ。手元で書き換えた辞書は消しません)。
+
+記録が無い・一致しない場合は、自分で戻してください。
+
+```bash
+git -C ~/mozc checkout HEAD -- src/data/dictionary_oss/dictionary00.txt
+```
+
+戻さなくてもビルドはできますが、その場合は前の Mozc-UT の語が辞書に残ったままになります。
+
+`.git` を持たない Mozc (フォルダーごと配布されたもの) では取り除けません。その場合は Mozc を取得し直してください。
+
 ## 性能とサイズ (実測)
 
 Linux x86_64 (6 コア、clang 21.1.8、Bazel 9.0.2、Mozc `a069a88d`) で、`personal_names`・`place_names`・`sudachidict` の 3 つ (1,142,950 行) を統合して測りました。

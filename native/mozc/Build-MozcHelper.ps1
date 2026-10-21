@@ -95,7 +95,7 @@ if (-not (Test-Path (Join-Path $MozcSource '.git'))) {
 $head = & git -C $MozcSource rev-parse -q --verify HEAD
 if ($head) {
     # 前に足したヘルパーの定義・dictionary_ut.txt を消し、取ってきたときの BUILD.bazel に戻す (BUILD.fragment の変更を反映し、checkout が止まらないように)
-    Invoke-Native git @('-C', $MozcSource, 'checkout', '-q', 'HEAD', '--', 'src/converter/BUILD.bazel', 'src/data/dictionary_oss/BUILD.bazel') 'BUILD.bazel を戻せませんでした。'
+    Invoke-Native git @('-C', $MozcSource, 'checkout', '-q', 'HEAD', '--', 'src/converter/BUILD.bazel') 'BUILD.bazel を戻せませんでした。'
 }
 if ($head -ne $commit) {
     Invoke-Native git @('-C', $MozcSource, 'fetch', '-q', '--depth', '1', 'origin', $commit) "Mozc ($commit) を取得できませんでした。"
@@ -117,6 +117,13 @@ $utReport = Join-Path $bin 'MOZC-UT.json'
 # 標準のヘルパーに見えてしまうため、ビルドが終わるまでは書かない。
 $utPending = Join-Path $bin 'MOZC-UT.json.tmp'
 if (Test-Path -LiteralPath $utPending) { Remove-Item -LiteralPath $utPending -Force }
+
+# 前の版 (1.3.1-pre.1 まで) で Mozc-UT を統合した Mozc の辞書00 は、初回だけ元に戻す。
+# この版からは Mozc の辞書00 を書き換えないので、古い語が残ると UT を指定しないビルドにも混ざる。
+# 記録 (MOZC-UT.json) の中身とハッシュが一致するときだけ戻す (手元で書き換えた辞書は消さない)。
+if (Test-Path -LiteralPath $utReport) {
+    Invoke-PythonUtf8 @($merge, '--mozc-src', $src, '--migrate', '--state', $utReport) '前の版で統合した Mozc-UT の語を、Mozc の辞書から取り除けませんでした。'
+}
 
 # Mozc-UT の語は Mozc の辞書とは別の dictionary_ut.txt に置き、ビルドのたびに作り直す
 # (Mozc の辞書は書き換えないので、手元で書き換えた辞書も残る)。

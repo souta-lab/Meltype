@@ -30,6 +30,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+# 1.3.1-pre.1 までの統合先 (この版では書き換えない。移行で元に戻すときだけ使う)。
+LEGACY_TARGET_RELATIVE = Path("data/dictionary_oss/dictionary00.txt")
 # 出力先。ビルドスクリプトが BUILD.bazel の base_dictionary_data に足す名前と揃える。
 OUTPUT_RELATIVE = Path("data/dictionary_oss/dictionary_ut.txt")
 BUILD_RELATIVE = Path("data/dictionary_oss/BUILD.bazel")
@@ -374,6 +376,65 @@ def remove_duplicates(entries: list[Entry],
     return kept, in_ut, in_mozc
 
 
+def recorded_target_sha(state: Path | None) -> str | None:
+    """前回このツールが統合した辞書のハッシュ (MOZC-UT.json の result.target_sha256)。"""
+    if state is None:
+        return None
+    try:
+        data = json.loads(state.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    result = data.get("result")
+    if not isinstance(result, dict):
+        return None
+    value = result.get("target_sha256")
+    if not isinstance(value, str) or len(value) != 64:
+        return None
+    return value.lower()
+
+
+def migrate_dictionary(mozc_src: Path, state: Path | None) -> bool:
+    """1.3.1-pre.1 までに統合した Mozc の辞書00 を、初回だけ Mozc の git の状態に戻す。
+
+    この版からは Mozc の辞書00 を書き換えないので、前に統合した語が残っていると
+    環境変数を指定しないビルドにも混ざり続ける。記録 (state) のハッシュと中身が
+    一致するときだけ戻す (手元で書き換えた辞書は消さない)。
+    """
+    root = mozc_src.parent
+    target = mozc_src / LEGACY_TARGET_RELATIVE
+    relative = target.relative_to(root).as_posix()
+    if not (root / ".git").exists() or not target.is_file():
+        return False
+    status = run_git(root, "status", "--porcelain", "--", relative)
+    if status.returncode != 0:
+        raise MergeError(f"Mozc の状態を調べられませんでした: {status.stderr.strip()}")
+    if not status.stdout.strip():
+        return False
+    if recorded_target_sha(state) != sha256_of(target):
+        raise MergeError(
+            f"{relative} が、前回このツールが統合したときの中身と違います。\n"
+            "手元で書き換えた辞書を消さないため、元に戻すのをやめました。\n"
+            f"  - Mozc の辞書: {target}\n"
+            f"  - 前回の統合の記録: {state if state is not None else '(指定なし)'}\n"
+            "元に戻す方法:\n"
+            f"  git -C {root} checkout HEAD -- {relative}\n"
+            "(この版からは Mozc の辞書00 を書き換えないので、戻さなくてもビルドはできます。"
+            "戻さない場合、前の Mozc-UT の語は辞書に残ったままになります)"
+        )
+    # `git checkout -- <path>` は index から戻すので、add されていると統合済みの中身が戻る。
+    # 必ず HEAD から戻す。
+    checkout = run_git(root, "checkout", "HEAD", "--", relative)
+    if checkout.returncode != 0:
+        raise MergeError(f"{relative} を元に戻せませんでした: {checkout.stderr.strip()}")
+    verify = run_git(root, "diff", "--quiet", "HEAD", "--", relative)
+    if verify.returncode != 0:
+        raise MergeError(
+            f"{relative} を Mozc の git の記録 (HEAD) と同じにできませんでした。\n"
+            "Mozc のフォルダーを消して、ビルドスクリプトで取得し直してください。"
+        )
+    return True
+
+
 def ensure_registered(mozc_src: Path) -> None:
     """出力先が Mozc のビルドに含まれるか確かめる。含まれないと、書いた語が黙って捨てられる。"""
     build = mozc_src / BUILD_RELATIVE
@@ -460,6 +521,14 @@ def main(argv: list[str]) -> int:
         help=f"辞書を確かめるだけで、{OUTPUT_RELATIVE.name} は書かない",
     )
     parser.add_argument(
+        "--migrate", action="store_true",
+        help="1.3.1-pre.1 までに Mozc の辞書00 へ統合した語を、記録と一致するときだけ元に戻す",
+    )
+    parser.add_argument(
+        "--state", type=Path,
+        help="前回の統合の記録 (MOZC-UT.json)。--migrate で元に戻してよいかの確認に使う",
+    )
+    parser.add_argument(
         "--report", type=Path,
         help="統合した内容 (辞書と Mozc のハッシュなど) を JSON で書き出す",
     )
@@ -485,6 +554,14 @@ def main(argv: list[str]) -> int:
             f"Mozc の data/dictionary_oss が見つかりません: {mozc_src}\n"
             "--mozc-src には Mozc の src ディレクトリを指定してください。"
         )
+
+    if args.migrate:
+        migrated = migrate_dictionary(mozc_src, args.state)
+        print(
+            "前の版で統合した Mozc-UT の語を、Mozc の辞書から取り除きました。"
+            if migrated else "Mozc の辞書00 は、統合する前の状態のままです。"
+        )
+        return EXIT_OK
 
     # argparse の required は終了コード 2 (辞書の中身が不正) になるので、ここで確かめる。
     if not args.dictionary:

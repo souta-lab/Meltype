@@ -438,5 +438,53 @@ class ModuleTest(unittest.TestCase):
         self.assertEqual(in_mozc, 0)
 
 
+class MigrateTest(MergeTestBase):
+    """1.3.1-pre.1 までに Mozc の辞書00 へ統合した語を、初回だけ取り除く (--migrate)。"""
+
+    def pollute(self) -> Path:
+        """前の版のスクリプトが作っていた状態 (辞書00 に UT の語) を作る。"""
+        self.mozc.write_base(
+            "".join(self.mozc.base.read_text(encoding="utf-8"))
+            + "ゆーてぃー\t1851\t1851\t5000\tユーティー\n")
+        state = self.temp / "MOZC-UT.json"
+        state.write_text(json.dumps(
+            {"schema": 1, "result": {"target_sha256": self.mozc.base_sha()}}),
+            encoding="utf-8")
+        return state
+
+    def test_migrate_undoes_previous_merge(self):
+        original = self.mozc.base_sha()
+        state = self.pollute()
+        result = self.run_script("--migrate", "--state", str(state))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.mozc.base_sha(), original)
+        self.assertIn("取り除きました", result.stdout)
+
+    def test_migrate_keeps_dictionary_edited_after_the_merge(self):
+        state = self.pollute()
+        self.mozc.write_base(
+            self.mozc.base.read_text(encoding="utf-8")
+            + "じかせい\t1851\t1851\t5000\tジカセイ\n")
+        before = self.mozc.base_sha()
+        result = self.run_script("--migrate", "--state", str(state))
+        self.assertNotEqual(result.returncode, 0, "手元の辞書を消してはいけない")
+        self.assertEqual(self.mozc.base_sha(), before)
+        self.assertIn("やめました", result.stderr)
+
+    def test_migrate_without_state_does_not_touch_the_dictionary(self):
+        # 記録が無い (どの版で統合したか分からない) 辞書は触らない。
+        state = self.pollute()
+        state.unlink()
+        before = self.mozc.base_sha()
+        result = self.run_script("--migrate")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.mozc.base_sha(), before)
+
+    def test_migrate_when_nothing_to_do(self):
+        result = self.run_script("--migrate")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("統合する前の状態のままです", result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
