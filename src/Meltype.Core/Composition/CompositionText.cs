@@ -356,11 +356,12 @@ public sealed class CompositionText
         return letters.ToString();
     }
 
-    /// <summary>英字の並びの最後が、4 文字以上の知っている英単語で終わっているか (… hotel)。</summary>
     /// <summary>
     /// kwo を k + を に割るか。英単語の最後の k のあとに を を打ったとき (back|wo・ink|wo・ok|wo) だけ割る。
     /// 日本語の綴りの途中 (akwo・ikwo) は、そこまでの英字が英単語にならないので割らない。
-    /// 同梱の辞書 (ok・bank) と、スペルチェッカーだけが知っている語 (ink) の両方を見る。
+    /// 4 文字以上の語は同梱の辞書とスペルチェッカーで見る。2〜3 文字の語 (ok・ink) は、
+    /// かなの単位のローマ字 (お の o) を英字として数えてしまうため、入力の先頭から始まるときだけ認める
+    /// (watashiha|ok|wo を わたしはokを にしない)。
     /// </summary>
     private bool EndsWithEnglishWordBeforeKwo()
     {
@@ -370,11 +371,19 @@ public sealed class CompositionText
             letters = _units[i].Raw + letters;
             if (letters.Length < 2) continue;
             var lower = letters.ToLowerInvariant();
-            if (_detector.IsListedEnglishWord(lower) || _detector.IsKnownEnglishWord(lower) || _detector.IsSpellWord(lower)) return true;
+            if (letters.Length >= 4)
+            {
+                if (_detector.IsKnownEnglishWord(lower)) return true;
+            }
+            else if (i == 0 && (_detector.IsListedEnglishWord(lower) || _detector.IsKnownEnglishWord(lower) || _detector.IsSpellWord(lower)))
+            {
+                return true;
+            }
         }
         return false;
     }
 
+    /// <summary>英字の並びの最後が、4 文字以上の知っている英単語で終わっているか (… hotel)。</summary>
     private bool EndsWithEnglishWord(string letters)
     {
         for (var start = 0; start <= letters.Length - 4; start++)

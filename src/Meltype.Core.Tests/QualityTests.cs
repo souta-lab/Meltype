@@ -252,6 +252,9 @@ internal static class Quality
         new("混在", "taskwo", "taskを"),
         new("混在", "inkwo", "inkを"),
         new("混在", "okwo", "okを"),
+        // 2〜3 文字の英単語は、入力の先頭から始まるときだけ (かなの「お」を英字と数えない)
+        new("日本語", "watashihaokwo", "わたしはおくぉ"),
+        new("日本語", "haokwo", "はおくぉ"),
         new("混在", "bankwo", "bankを"),
         // 英語の語を english-readable に入れると、日本語の先頭と重なる綴りが壊れる
         // (pure → purezento が pureぜんと、image → imageru が imageる になっていた)
