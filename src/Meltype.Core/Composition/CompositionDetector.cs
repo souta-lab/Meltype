@@ -778,8 +778,7 @@ public sealed partial class CompositionDetector
         // ただし、ローマ字として最後まで読める固有名詞 (korea = これあ) の後ろに、助詞でない日本語が続くなら、日本語の語の途中
         // (korea|reka → これあれか。Korea|reka にしない)。助詞が続くなら固有名詞 (korea|de → Koreaで)。
         if (lower.Length >= 4 && _proper.Contains(lower) && next is { Length: > 0 } && char.IsAsciiLetter(next[0]) &&
-            analysis is { IsValid: true, Partial: "" } &&
-            Detection.DictionaryDetector.StartsWithParticle(next.ToLowerInvariant()) is null)
+            analysis is { IsValid: true, Partial: "" } && Detection.DictionaryDetector.StartsWithParticle(next.ToLowerInvariant()) is null)
         {
             return false;
         }

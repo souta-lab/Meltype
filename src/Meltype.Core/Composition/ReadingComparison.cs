@@ -39,6 +39,8 @@ public sealed partial class CompositionDetector
     private readonly Dictionary<string, (bool Usable, string Kana, ReadingKind Kind, double Cost)> _readingJapaneseTokens =
         new(StringComparer.Ordinal);
     private int _readingCacheVersion = -1;
+    /// <summary>控えの件数の上限 (学習しない設定で長く使っても増え続けないように、超えたら捨てる)。</summary>
+    private const int ReadingCacheLimit = 512;
 
     /// <summary>この決め方が有効か (区間の控えのキーに使う)。</summary>
     internal bool ReadingComparisonEnabled => ReadingComparison;
@@ -245,7 +247,11 @@ public sealed partial class CompositionDetector
                                     // 末尾の ん は表示側 (RenderSegments) が付けるので、語の読みからは外す
                                     token = (true, partialN && j == length ? analysis.Kana : fullKana, next, cost);
                                     // 次の打鍵でも使い回せるのは、位置に依らない区間だけ
-                                    if (!partialN) _readingJapaneseTokens[lower] = token;
+                                    if (!partialN)
+                                    {
+                                        _readingJapaneseTokens[lower] = token;
+                                        if (_readingJapaneseTokens.Count > ReadingCacheLimit) _readingJapaneseTokens.Clear();
+                                    }
                                 }
                             }
                             japaneseTokens[(i, j)] = token;
@@ -259,6 +265,7 @@ public sealed partial class CompositionDetector
                     {
                         if (!_readingEnglishCosts.TryGetValue(lower, out englishBase))
                             _readingEnglishCosts[lower] = englishBase = EnglishCost(lower, raw);
+                        if (_readingEnglishCosts.Count > ReadingCacheLimit) _readingEnglishCosts.Clear();
                         englishScores[(i, j)] = englishBase;
                     }
                     var englishCost = englishBase + SwitchCost((ReadingKind)kind, ReadingKind.English)
