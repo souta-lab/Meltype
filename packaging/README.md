@@ -7,6 +7,11 @@
 | `aur/meltype-bin/PKGBUILD` | Arch Linux (AUR) | リリースの zip を展開して `/opt/meltype` に置く (ビルドなし) |
 | `pacstall/meltype.pacscript` | Debian / Ubuntu (pacstall) | リリースの `.deb` を展開する (ビルドなし) |
 
+## それぞれを用意する理由
+
+- **AUR (`meltype-bin`)**: Arch Linux には、いま Meltype を入れる配布経路がありません (zip を手で展開するしかない)。AUR があると `pacman` で入れ・更新・削除できます
+- **pacstall (`meltype`)**: Debian / Ubuntu は、すでに apt リポジトリから入れられます (`linux/README.md` の手順で鍵とリポジトリを登録すると、`apt upgrade` で更新できます)。pacstall の定義は、**鍵とリポジトリの登録をせずに pacstall だけで入れたい人**と、pacstall を既に使っている人のための導線です。apt の代替ではありません
+
 `meltype-ut` (Mozc-UT の辞書入りの変換ヘルパー) は、`makepkg` のときに Mozc を Bazel でビルドする必要があり、この PR には入れていません。AUR の `mozc-ut` と同じ形にできますが、ビルドに時間がかかるため、`meltype-bin` とは別に相談したいと考えています。
 
 ## 版を上げるとき
