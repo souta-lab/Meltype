@@ -540,6 +540,53 @@ internal static class SessionFacadeTests
     }
 
     [Test]
+    public static void CodeInput_SwitchCodeLineLetsTheTerminalTurnJapanese()
+    {
+        // issue #1078: ターミナルはコード入力のままで、半角/全角 を押しても日本語にできなかった。
+        var session = Create();
+        session.CodeInput = true;
+        session.CodeTerminal = true;
+        const string line = "$ ";
+
+        Assert.Equal(0, session.SwitchCodeLine(2, line), "日本語にしていなければ、英数に戻すことはない");
+        Assert.Equal(2, session.SwitchCodeLine(1, line), "変換キーで日本語にする");
+        Assert.True(!session.CodeEnglishAt(line), "日本語になった");
+        Assert.Equal("きょうは", Type(session, "kyouha", line)[^1].View?.Text);
+        session.CommitPending();
+
+        Assert.Equal(1, session.SwitchCodeLine(2, line), "無変換キーで英数に戻す");
+        Assert.True(session.CodeEnglishAt(line), "英数に戻った");
+
+        Assert.Equal(2, session.SwitchCodeLine(0, line), "半角/全角 で日本語にする");
+        Assert.Equal(1, session.SwitchCodeLine(0, line), "もう一度押すと英数に戻る");
+
+        // 周りの文字が取れない (ターミナル) ときは、打った行から追いかける
+        Assert.Equal(2, session.SwitchCodeLine(0, null), "周りの文字が無くても日本語にできる");
+        Assert.True(!session.CodeEnglishAt(null), "日本語になった");
+
+        // コメント・文字列の中では何もしない (IME の ON/OFF に任せる)
+        Assert.Equal(1, session.SwitchCodeLine(2, line), "いったん英数に戻す");
+        Assert.Equal(0, session.SwitchCodeLine(0, "// "), "コメントでは何もしない");
+        Assert.Equal(0, session.SwitchCodeLine(1, "/* comment"), "コメントでは何もしない");
+        Assert.Equal(0, session.SwitchCodeLine(0, "const text = \""), "文字列では何もしない");
+
+        // コードの入力欄でなければ何もしない
+        session.CodeInput = false;
+        Assert.Equal(0, session.SwitchCodeLine(1, line), "コードの入力欄でなければ何もしない");
+    }
+
+    [Test]
+    public static void CodeInput_SwitchCodeLineLetsTheEnglishDirectThrough()
+    {
+        // 英数 (直接入力) のときの 半角/全角 は、これまでどおり英数/日本語の切り替えに任せる
+        var session = Create();
+        session.CodeInput = true;
+        session.Direct = true;
+        Assert.Equal(0, session.SwitchCodeLine(0, "$ "), "英数のときは何もしない (エンジンが切り替える)");
+        Assert.Equal(2, session.SwitchCodeLine(1, "$ "), "変換キーなら日本語にする");
+    }
+
+    [Test]
     public static void CodeInput_SetCodeLineMakesCodeJapaneseUntilCaretMoves()
     {
         var session = Create();

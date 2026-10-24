@@ -77,6 +77,11 @@ _lib.meltype_set_can_delete.argtypes = [ctypes.c_void_p, ctypes.c_int]
 _set_code_input = getattr(_lib, "meltype_set_code_input", None)
 if _set_code_input is not None:
     _set_code_input.argtypes = [ctypes.c_void_p, ctypes.c_int]
+# コードの行の日本語/英数の切り替え (issue #1078)。古い本体には無い
+_switch_code_line = getattr(_lib, "meltype_switch_code_line", None)
+if _switch_code_line is not None:
+    _switch_code_line.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_char_p]
+    _switch_code_line.restype = ctypes.c_int
 _lib.meltype_free.argtypes = [ctypes.c_void_p]
 _lib.meltype_report_url.argtypes = [ctypes.c_char_p]
 _lib.meltype_report_url.restype = ctypes.c_void_p
@@ -91,6 +96,8 @@ ROLE_KEYS = {IBus.KEY_Henkan: 0x1C, IBus.KEY_Muhenkan: 0x1D, IBus.KEY_Hiragana_K
 # 半角/全角: 英数 (直接入力) ⇔ 日本語。英数・ひらがなのキーでも切り替える (JIS キーボード)。
 ZENKAKU_HANKAKU_KEYS = (IBus.KEY_Zenkaku_Hankaku, IBus.KEY_Hankaku, IBus.KEY_Zenkaku)
 ALWAYS_DIRECT_KEYS = (IBus.KEY_Eisu_toggle, IBus.KEY_Muhenkan)
+# 変換・ひらがな/カタカナ: コードの行では日本語にする (Windows 版と同じ)
+JAPANESE_KEYS = (IBus.KEY_Hiragana_Katakana, IBus.KEY_Henkan)
 MODE_SWITCH_KEYS = ZENKAKU_HANKAKU_KEYS + ALWAYS_DIRECT_KEYS + (IBus.KEY_Hiragana_Katakana, IBus.KEY_Henkan)
 
 # IBus の修飾キー → 本体が使うビット (Shift=1, Ctrl=2, Alt=4, Win=8)
@@ -253,8 +260,18 @@ class MeltypeEngine(IBus.Engine):
 
     def _switch_mode(self, keyval):
         """未確定の内容を確定してから、英数 (直接入力) と日本語を切り替える。"""
-        to_direct = keyval in ALWAYS_DIRECT_KEYS or (keyval in ZENKAKU_HANKAKU_KEYS and not self._direct)
         self._apply(_result(_lib.meltype_commit(self._session)))
+        # コードの入力欄 (ターミナルなど) では、この行だけ日本語にする / 英数に戻す (Windows 版と同じ)。
+        # これが無いと、ターミナルはコード入力のままで日本語にできない (issue #1078)。
+        if _switch_code_line is not None:
+            action = 2 if keyval in ALWAYS_DIRECT_KEYS else 1 if keyval in JAPANESE_KEYS else 0
+            before, _after = self._surrounding_text()
+            if _switch_code_line(self._session, action, before.encode() if before is not None else None):
+                if action == 1 and self._direct:
+                    self._direct = False
+                    _lib.meltype_set_direct(self._session, 0)
+                return
+        to_direct = keyval in ALWAYS_DIRECT_KEYS or (keyval in ZENKAKU_HANKAKU_KEYS and not self._direct)
         self._direct = to_direct
         _lib.meltype_set_direct(self._session, 1 if to_direct else 0)
 

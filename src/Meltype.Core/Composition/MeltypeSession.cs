@@ -344,6 +344,40 @@ public sealed class MeltypeSession
     }
 
     /// <summary>
+    /// コードの行の日本語/英数を切り替える (Linux の IBus / fcitx5 のエンジンが、半角/全角・変換・無変換を押したときに呼ぶ)。
+    /// Windows 版は同じことを MeltypeEngine で行っている (#1078: ターミナルでコード入力のまま日本語にできない)。
+    /// action は 0 = 切り替え、1 = 日本語、2 = 英数。
+    /// 戻り値は 0 = 何もしない (エンジンは従来どおり英数/日本語を切り替える)、1 = 英数にした、2 = 日本語にした。
+    /// コードの入力欄でない・入力中・コメントや文字列の中では何もせず 0。
+    /// </summary>
+    public int SwitchCodeLine(int action, string? before)
+    {
+        if (!CodeInput || _controller.IsComposing) return 0;
+        before = SyncCodeLine(before);
+        if (action == 2)
+        {
+            if (!_codeJapanese) return 0;
+            _codeJapanese = false;
+            Diagnostics.Log.Info("コードの行: 英数に戻す");
+            return 1;
+        }
+        // 英数のときの 半角/全角 は、これまでどおり英数/日本語の切り替えに任せる (Windows 版と同じ)
+        if (action == 0 && Direct) return 0;
+        if (_codeJapanese)
+        {
+            if (action == 1) return 2;
+            _codeJapanese = false;
+            Diagnostics.Log.Info("コードの行: 英数に戻す");
+            return 1;
+        }
+        // 周りの文字が取れない入力欄 (ターミナルなど) は、行が空なのでコードとして扱う
+        if (!string.IsNullOrEmpty(before) && LineContext.ClassifyText(before) != LineKind.Code) return 0;
+        _codeJapanese = true;
+        Diagnostics.Log.Info("コードの行: 日本語で入力 (改行しても続ける。キャレットが別の場所に移るか、もう一度押すまで)");
+        return 2;
+    }
+
+    /// <summary>
     /// 次に打つキーが、コードの行なので英数のままアプリに通るか (入力モードの表示に使う)。
     /// before はキャレットの前 (null なら、打ったキーから追いかけた今の行)。
     /// </summary>

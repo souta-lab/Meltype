@@ -51,6 +51,7 @@ struct Native {
     void (*setDirect)(void *, int) = nullptr;
     void (*setCanDelete)(void *, int) = nullptr; // 古い本体には無い
     void (*setCodeInput)(void *, int) = nullptr; // 古い本体には無い (コード入力: ターミナルの入力欄で既定にする、#715)
+    int (*switchCodeLine)(void *, int, const char *) = nullptr; // 古い本体には無い (コードの行の日本語/英数: #1078)
     char *(*roleKey)(void *, int) = nullptr;     // 古い本体には無い (入力中のキーの役割: #199)
     void (*free)(void *) = nullptr;
 
@@ -72,6 +73,7 @@ struct Native {
         setDirect = reinterpret_cast<decltype(setDirect)>(sym("meltype_set_direct"));
         setCanDelete = reinterpret_cast<decltype(setCanDelete)>(sym("meltype_set_can_delete"));
         setCodeInput = reinterpret_cast<decltype(setCodeInput)>(sym("meltype_set_code_input"));
+        switchCodeLine = reinterpret_cast<decltype(switchCodeLine)>(sym("meltype_switch_code_line"));
         roleKey = reinterpret_cast<decltype(roleKey)>(sym("meltype_role_key"));
         free = reinterpret_cast<decltype(free)>(sym("meltype_free"));
         if (!create || !destroy || !handleKey || !commit || !selectCandidate || !setDirect || !free) {
@@ -387,9 +389,31 @@ public:
         // 半角/全角: 英数 (直接入力) ⇔ 日本語。英数・ひらがなのキーでも切り替える (JIS キーボード)。
         if (sym == FcitxKey_Zenkaku_Hankaku || sym == FcitxKey_Hankaku || sym == FcitxKey_Zenkaku || sym == FcitxKey_Eisu_toggle ||
             sym == FcitxKey_Hiragana_Katakana || sym == FcitxKey_Muhenkan || sym == FcitxKey_Henkan) {
+            apply(ic, native_.take(native_.commit(state->session())));
+            // コードの入力欄 (ターミナルなど) では、この行だけ日本語にする / 英数に戻す (Windows 版と同じ)。
+            // これが無いと、ターミナルはコード入力のままで日本語にできない (issue #1078)。
+            if (native_.switchCodeLine) {
+                const int action = (sym == FcitxKey_Eisu_toggle || sym == FcitxKey_Muhenkan) ? 2
+                                   : (sym == FcitxKey_Hiragana_Katakana || sym == FcitxKey_Henkan) ? 1
+                                                                                                 : 0;
+                std::string before, after;
+                const bool surrounding = readSurrounding(ic, before, after);
+                const int switched = native_.switchCodeLine(state->session(), action, surrounding ? before.c_str() : nullptr);
+                if (switched) {
+                    // 英数のままコードの行を日本語にしたときは、英数を解く
+                    if (action == 1 && state->direct) {
+                        state->direct = false;
+                        native_.setDirect(state->session(), 0);
+                    }
+                    // 切り替えたモードをカーソル位置に出す (Mozc と同じ入力パネルの枠)
+                    ic->inputPanel().setAuxUp(fcitx::Text(switched == 2 ? "あ" : "A"));
+                    ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
+                    event.filterAndAccept();
+                    return;
+                }
+            }
             bool toDirect = sym == FcitxKey_Eisu_toggle || sym == FcitxKey_Muhenkan ||
                             ((sym == FcitxKey_Zenkaku_Hankaku || sym == FcitxKey_Hankaku || sym == FcitxKey_Zenkaku) && !state->direct);
-            apply(ic, native_.take(native_.commit(state->session())));
             state->direct = toDirect;
             native_.setDirect(state->session(), toDirect ? 1 : 0);
             // 切り替えたモードをカーソル位置に出す (Mozc と同じ入力パネルの枠)

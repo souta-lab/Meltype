@@ -155,6 +155,25 @@ public static unsafe class Exports
         if (handle != IntPtr.Zero && GCHandle.FromIntPtr(handle).Target is MeltypeSession session) session.Direct = direct != 0;
     }
 
+    /// <summary>
+    /// コードの行の日本語/英数を切り替える (0 = 切り替え、1 = 日本語、2 = 英数)。
+    /// 戻り値は 0 = 何もしない、1 = 英数にした、2 = 日本語にした (Linux の IBus / fcitx5 のエンジンが使う)。
+    /// </summary>
+    [UnmanagedCallersOnly(EntryPoint = "meltype_switch_code_line")]
+    public static int SwitchCodeLine(IntPtr handle, int action, byte* before)
+    {
+        try
+        {
+            if (handle == IntPtr.Zero || GCHandle.FromIntPtr(handle).Target is not MeltypeSession session) return 0;
+            return session.SwitchCodeLine(action, FromUtf8(before));
+        }
+        catch (Exception ex)
+        {
+            Diagnostics.Log.Error($"コードの行の切り替えで例外: {ex}");
+            return 0;
+        }
+    }
+
     [UnmanagedCallersOnly(EntryPoint = "meltype_set_code_input")]
     public static void SetCodeInput(IntPtr handle, int enabled)
     {
