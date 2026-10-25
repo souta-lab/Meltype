@@ -250,7 +250,7 @@ public sealed partial class CompositionDetector
         }
         // 辞書の短い英語 (pro) だけが先頭で英語になり、残りの英字がかな化される (procrasticle: issue #537)。
         if (level != DetectionLevel.Manual && whole.All(char.IsAsciiLetter) && Memory?.Get(whole.ToLowerInvariant()) != false &&
-            !IsKnownEnglishWord(whole.ToLowerInvariant()) && HasListedEnglishPrefixSplit(whole, segments))
+            !IsKnownEnglishWord(whole.ToLowerInvariant()) && HasListedEnglishPrefixSplit(whole, segments, pending, final))
             return [new CompositionSegment(true, "", whole)];
         return segments;
     }
@@ -292,8 +292,8 @@ public sealed partial class CompositionDetector
         return -1;
     }
 
-    /// <summary>先頭が辞書の短い英語 (pro) で、残りがまだ英字なのに日本語区間になっている (procrasticle)。</summary>
-    private bool HasListedEnglishPrefixSplit(string whole, List<CompositionSegment> segments)
+    /// <summary>先頭が辞書の短い英語 (pro) で、後続の読みにかなにならない英字が残るか (procrasticle)。</summary>
+    private bool HasListedEnglishPrefixSplit(string whole, List<CompositionSegment> segments, string pending, bool final)
     {
         if (segments.Count < 2 || !segments[0].IsEnglish || segments[1].IsEnglish) return false;
         var head = segments[0].Raw;
@@ -306,7 +306,11 @@ public sealed partial class CompositionDetector
         var lowerWhole = whole.ToLowerInvariant();
         for (var len = head.Length + 1; len <= lowerWhole.Length; len++)
             if (IsKnownEnglishWord(lowerWhole[..len])) return false;
-        return segments.Skip(1).All(s => !s.IsEnglish && s.Raw.All(char.IsAsciiLetter));
+        // 読めない英字が残るときだけ補正する。usb + つないで のように、かなになった日本語は区切りを保つ。
+        // 確定時は pending も数える (prozac の c)。n は確定すると「ん」になるので英字には数えない。
+        return segments.Skip(1).All(s => !s.IsEnglish && s.Raw.All(char.IsAsciiLetter)) &&
+            (segments.Skip(1).Any(s => s.Kana.Any(char.IsAsciiLetter)) ||
+             final && _romaji.ConvertLenient(pending.ToLowerInvariant(), final: true).Any(char.IsAsciiLetter));
     }
 
     /// <summary>

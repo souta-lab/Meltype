@@ -14,9 +14,10 @@ const ascii = /^[\x21-\x7e]+$/;
 
 /** 辞書ごとの形式。line は # 以降を除いた行。 */
 const formats = {
-  // 読み 候補 候補 … (空白区切り)。記号の行 (/ @ . ,) は読みが記号
+  // 読み 候補 候補 … (空白区切り)。読みは打ったときの読みと完全一致で引くので、キーを打って作れる文字列だけを通す。
+  // 記号の行 (/ @ . ,) は読みが記号。ローマ字入力で全角になる記号 (-> の読みは ー＞) も通す。全角の英数字は打っても出てこない
   'candidates.txt': spaced((reading, rest) => [
-    hiragana.test(reading) || /^[\x21-\x7e]+$/.test(reading) ? null : `読み「${reading}」がひらがなでも記号でもない`,
+    hiragana.test(reading) || /^[\x21-\x7e]+$/.test(reading) || /^[ー！-／：-＠［-｀｛-～]+$/.test(reading) ? null : `読み「${reading}」がひらがなでも記号でもない`,
     rest.length === 0 ? '候補が無い' : null,
   ]),
   'brands.txt': spaced((reading, rest) => [
