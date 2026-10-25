@@ -121,13 +121,25 @@ public sealed partial class CompositionDetector
             // 途中までしか読めない語 (delimit = でりみっと + t) は、日本語の語にならないので 1 点のまま。
             // 複数形 (invites) は、語幹 (invite) が読めるかで決める (invites を invite より安くしない)。
             var stem = lower.Length >= 4 && lower[^1] == 's' && IsKnownEnglishWord(lower[..^1]) ? lower[..^1] : lower;
-            if (_romaji.AnalyzeFragment(stem) is { IsValid: true, Partial: "" }) return EnglishUnknownCost * raw.Length;
+            if (_romaji.AnalyzeFragment(stem) is { IsValid: true, Partial: "" } analysis &&
+                PlausibleJapanese(analysis.Kana, stem)) return EnglishUnknownCost * raw.Length;
             return EnglishWordCost;
         }
         var total = 0.0;
         for (var i = 0; i < raw.Length; i++)
             total += char.IsAsciiLetterUpper(raw[i]) ? EnglishUpperCost : EnglishUnknownCost;
         return total;
+    }
+
+    /// <summary>
+    /// そのかなの並びが、日本語の語・語の始まりとしてありうるか。
+    /// ありえない (がぇ・てぃん・うぇあゔぇ など) ときは、ローマ字として読めても日本語に倒さない。
+    /// </summary>
+    private bool PlausibleJapanese(string kana, string romaji)
+    {
+        if (kana.Length == 0) return false;
+        // 読み (readings.txt・約 2 万語) にあるか、日本語の語の始まりになるか
+        return CommonReadings.Words.Contains(kana) || _japanese.IsPrefix(romaji);
     }
 
     /// <summary>区切りを移るときの点。日本語側が助詞・する のときは、英語とつながって自然なので 0。</summary>
