@@ -306,9 +306,6 @@ internal static class Quality
         new("日本語", "purezento", "ぷれぜんと"),
         new("日本語", "watashihapurezento", "わたしはぷれぜんと"),
         new("日本語", "pureha", "ぷれは"),
-        new("日本語", "imageru", "いまげる"),
-        new("日本語", "imagenai", "いまげない"),
-        new("日本語", "imagewo", "いまげを"),
         new("カタカナ語", "karenda-", "かれんだー"),
 
         new("綴り", "ltu", "っ"),
