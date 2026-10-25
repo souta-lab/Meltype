@@ -116,6 +116,7 @@ jobs:
       - run: node .github/bot/meltype-bot.mjs release
         env:
           GITHUB_TOKEN: ${{ steps.app.outputs.token || github.token }}
+          BOT_DISPATCH_TOKEN: ${{ github.token }}
           BOT_RELEASE_COMMAND: ${{ needs.parse.outputs.release_command }}
           BOT_RELEASE_VERSION: ${{ needs.parse.outputs.release_version }}
 
