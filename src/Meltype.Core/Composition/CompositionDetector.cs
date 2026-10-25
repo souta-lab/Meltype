@@ -176,6 +176,10 @@ public sealed partial class CompositionDetector
                     var right = raw[(end + 2)..];
                     if (_romaji.Analyze(left.ToLowerInvariant()) is { IsValid: true, Partial: "" or "n" }) continue;
                     if (_romaji.Analyze(right.ToLowerInvariant()) is { IsValid: true, Partial: "" or "n" }) continue;
+                    // 右が同じ子音 2 つで始まり、ローマ字として読める (not|to|tte の tte = って) なら、っ の綴りで続く日本語 (則って) なので、英単語ではない (issue #1030)。
+                    // 読めないもの (ppt・ffmpeg・llm) は英単語のまま (excel|と|ppt)。
+                    if (right.Length >= 2 && char.ToLowerInvariant(right[0]) == char.ToLowerInvariant(right[1]) &&
+                        char.ToLowerInvariant(right[0]) is not ('a' or 'i' or 'u' or 'e' or 'o' or 'n') && _romaji.AnalyzeFragment(right.ToLowerInvariant()).IsValid) continue;
                     if (IsKnownEnglishWord(left + "to")) continue;
                     // 左が英単語でなく、to までで日本語の語 (chotto の っと) になるか、to が英単語の途中 (stories・symptom) なら助詞ではない
                     if (!IsKnownEnglishWord(left) && (EndsWithJapaneseWord(raw.ToLowerInvariant()[..(end + 2)]) || ToInsideEnglishWord(raw.ToLowerInvariant(), end))) continue;
@@ -652,6 +656,12 @@ public sealed partial class CompositionDetector
         var stem = span[..^1];
         if (stem.Length < 3 || !stem.All(char.IsAsciiLetterLower)) return false;
         if (IsCommonJapanese?.Invoke(stem) == true || _japanese.Words.ContainsWord(stem)) return false;
+        // 数字が続き (A4・B5 の紙の大きさ)、小文字側がかなとして読める (dokyumento|wo|A4 の ntowo) なら、名前の最後の大文字ではなく、
+        // 大文字 + 数字の略記 (kamiwo|A4 = 紙をA4: issue #1005)。読めない製品名 (galaxyS24・xperiaZ5) は今までどおり名前。
+        if (next is [var digit, ..] && char.IsAsciiDigit(digit) && _romaji.AnalyzeFragment(stem) is { IsValid: true, Partial: "" }) return false;
+        // 小文字側が助詞で終わる日本語 (kyouha|A = 今日はA、kamiwo|A = 紙をA) なら、日本語 + 大文字 1 文字
+        if (_romaji.Analyze(stem) is { IsValid: true, Partial: "" } &&
+            TrailingParticles.Any(particle => stem.Length > particle.Length && stem.EndsWith(particle, StringComparison.Ordinal))) return false;
         return true;
     }
 
@@ -1128,6 +1138,7 @@ public sealed partial class CompositionDetector
         while (i < units.Count && IsDigit(units[i])) i++;
         var digitLen = Raw(units, digitStart, i).Length;
         if (digitLen is < 1 or > 2) return -1;
+        var digitEnd = i;
         var pendingLetters = i == units.Count && pending.Length > 0 && pending.All(char.IsAsciiLetter) ? pending : "";
         if (i < units.Count && IsLetter(units[i]))
         {
@@ -1141,7 +1152,15 @@ public sealed partial class CompositionDetector
         }
         else if (pendingLetters.Length is < 1 or > 3) return -1;
         var word = Raw(units, start, i) + pendingLetters;
-        return word.Length is >= 3 and <= 6 ? i : -1;
+        if (word.Length is < 3 or > 6) return -1;
+        // 数字の前と後ろが、どちらもかなとして最後まで読める (huuso|ku|6|me|-toru の ku と me) なら、
+        // 略語 (i18n の n、k8s の s、h2o の h) ではなく、数字を挟んだ日本語 (風速6メートル: issue #1017)。
+        // 母音 1 文字 (e2e・o2o の e・o) は、かなとして読めても略語のことが多いので、子音から始まる 2 文字以上のときだけ。
+        var head = Raw(units, start, digitStart).ToLowerInvariant();
+        var tail = (Raw(units, digitEnd, i) + pendingLetters).ToLowerInvariant();
+        if (head.Length >= 2 && tail.Length >= 2 && _romaji.AnalyzeFragment(head) is { IsValid: true, Partial: "" } &&
+            _romaji.AnalyzeFragment(tail) is { IsValid: true, Partial: "" }) return -1;
+        return i;
     }
 
     /// <summary>
