@@ -32,11 +32,12 @@ internal static class ReadingComparisonTests
     [Test]
     public static void Beta_FixesWordsWhoseSplitCrossesAUnit()
     {
-        // printenv は print が te の途中で終わるため、今までの決まりでは 日本語の読みに英字が残る。
+        // main|に は nn の途中で分かれるため、今までの決まりでは表せない (まいんいpushする)。
+        // printenv は main の english-readable.txt で既定でも英字になったので、β版でも同じ。
         WithBeta(true, () =>
         {
-            Assert.Equal("printenv", Committed("printenv"), "printenv が英字のまま");
             Assert.Equal("mainにpushする", Committed("mainnipushsuru"), "main に push する の区切り");
+            Assert.Equal("printenv", Committed("printenv"), "english-readable にある語は英字のまま");
         });
     }
 
@@ -47,26 +48,26 @@ internal static class ReadingComparisonTests
         if (BetaForcedByEnvironment) return;
         WithBeta(false, () =>
         {
-            Assert.Equal("pりんてんv", Committed("printenv"), "β版を切れば今までどおり");
             Assert.Equal("まいんいpushする", Committed("mainnipushsuru"), "β版を切れば今までどおり");
+            Assert.Equal("printenv", Committed("printenv"), "english-readable にある語は既定でも英字");
         });
     }
 
     [Test]
     public static void ExplicitJapaneseLearning_IsNotOverridden()
     {
-        // ユーザーが明示的に「日本語」と直した語 (printenv → ぷりんてん…) は、点数でも英語にしない。
+        // ユーザーが明示的に「日本語」と直した語 (main → まいん) は、点数でも英語にしない。
         var memory = new LanguageMemory(null);
-        memory.Remember("printenv", english: false, explicitChoice: true);
+        memory.Remember("main", english: false, explicitChoice: true);
         var previous = CompositionTests.Detector.Memory;
         CompositionTests.Detector.Memory = memory;
         try
         {
             WithBeta(true, () =>
             {
-                var typed = Committed("printenv");
-                Assert.True(typed != "printenv", "明示的に日本語と覚えた語を英語にしない: " + typed);
-                Assert.True(typed.Contains("りんてん", StringComparison.Ordinal), "日本語の読みのまま: " + typed);
+                var typed = Committed("mainnipushsuru");
+                Assert.True(typed != "mainにpushする", "明示的に日本語と覚えた語を英語にしない: " + typed);
+                Assert.True(typed.Contains("まいん", StringComparison.Ordinal), "日本語の読みのまま: " + typed);
             });
         }
         finally
@@ -82,7 +83,7 @@ internal static class ReadingComparisonTests
         if (BetaForcedByEnvironment) return;
         // 同じ CompositionText のまま設定を切り替えたときに、前の区間の控えを返さない。
         var text = new CompositionText(CompositionTests.Detector);
-        foreach (var c in "printenv") text.Append(c);
+        foreach (var c in "mainnipushsuru") text.Append(c);
         var before = string.Join("|", text.Segments(final: true).Select(s => (s.IsEnglish ? "EN:" : "JA:") + s.Raw));
         // テストの前の値に必ず戻す (共有の Detector を他のテストと取り合わない)
         var previous = CompositionTests.Detector.UseReadingComparison;
@@ -91,7 +92,7 @@ internal static class ReadingComparisonTests
             CompositionTests.Detector.UseReadingComparison = () => true;
             var after = string.Join("|", text.Segments(final: true).Select(s => (s.IsEnglish ? "EN:" : "JA:") + s.Raw));
             Assert.True(before != after, "設定を変えたら区間を計算し直す: " + before + " / " + after);
-            Assert.Equal("EN:printenv", after);
+            Assert.Equal("EN:main|JA:ni|EN:push|JA:suru", after);
         }
         finally
         {
