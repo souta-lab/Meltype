@@ -49,14 +49,17 @@ public sealed partial class CompositionDetector
     /// 点数で区切り直す値打ちがあるか (入力のたびに DP を走らせないための安い判定)。
     /// 英語の区間が既にある (単位をまたぐ英単語を直せる) か、日本語の読みに英字が残っている (pりんてんv・どおm) ときだけ。
     /// </summary>
-    private static bool ShouldTryReadingComparison(List<CompositionSegment> segments)
+    private bool ShouldTryReadingComparison(List<CompositionSegment> segments, string token)
     {
         // 既に大半が英語なら、点数で直せるものは無い (長い英文を打つたびに DP を走らせない)
         var total = segments.Sum(segment => segment.Raw.Length);
         var english = segments.Where(segment => segment.IsEnglish).Sum(segment => segment.Raw.Length);
         if (total > 0 && english * 10 >= total * 8) return false;
         // 英語の区間がある (単位をまたぐ英単語を直せる) か、日本語の読みに英字が残っている (pりんてんv・どおm)
-        return segments.Any(segment => segment.IsEnglish || segment.Kana.Any(char.IsAsciiLetter));
+        if (segments.Any(segment => segment.IsEnglish || segment.Kana.Any(char.IsAsciiLetter))) return true;
+        // 全部日本語に見えても、今までの決まりが作ったかなに「日本語の形にならない並び」があるなら、
+        // その区切りは読み違えている (ちょっとがぇが = chottogalega の がぇ)。点数で比べる値打ちがある。
+        return segments.Any(segment => !segment.IsEnglish && !IsWellFormedKana(segment.Kana));
     }
 
     // 点の重み (issue #838 の案)。比べるときに環境変数で変えられるようにしておく。
@@ -132,14 +135,34 @@ public sealed partial class CompositionDetector
     }
 
     /// <summary>
-    /// そのかなの並びが、日本語の語・語の始まりとしてありうるか。
-    /// ありえない (がぇ・てぃん・うぇあゔぇ など) ときは、ローマ字として読めても日本語に倒さない。
+    /// そのかなの並びが、日本語として成立する形か (小書き文字が、それを取れる文字のうしろにあるか)。
+    /// がぇ (が + ぇ)・うぇあゔぇ の ゔぇ は成立しない。れぽ・ほすてぃんぐ・でぃすく は成立する。
+    /// 成立しない並びは、ローマ字として読めても日本語に倒さない (英単語を選ぶ)。
     /// </summary>
-    private bool PlausibleJapanese(string kana, string romaji)
+    private static bool IsWellFormedKana(string kana)
     {
         if (kana.Length == 0) return false;
-        // 読み (readings.txt・約 2 万語) にあるか、日本語の語の始まりになるか
-        return CommonReadings.Words.Contains(kana) || _japanese.IsPrefix(romaji);
+        // 単独の小書きかなは日本語にならない (ぇ・ゃ だけの区間は作らない)。促音 っ だけは許す。
+        if (kana.Length == 1 && "ぁぃぅぇぉゃゅょゎ".IndexOf(kana[0]) >= 0) return false;
+        for (var i = 0; i < kana.Length; i++)
+        {
+            var c = kana[i];
+            switch (c)
+            {
+                case 'ゃ' or 'ゅ' or 'ょ':
+                    // きゃ・しゃ・ちゃ… (い段の文字のうしろ)
+                    if (i == 0 || "きぎしじちぢにひびぴみり".IndexOf(kana[i - 1]) < 0) return false;
+                    break;
+                case 'ぁ' or 'ぃ' or 'ぅ' or 'ぇ' or 'ぉ':
+                    // ふぁ・てぃ・うぇ・ゔぇ… (外来語の書き方)
+                    if (i == 0 || "うふゔてでとどつすずしじちいくぐ".IndexOf(kana[i - 1]) < 0) return false;
+                    break;
+                case 'っ':
+                    if (i == 0) return false;
+                    break;
+            }
+        }
+        return true;
     }
 
     /// <summary>区切りを移るときの点。日本語側が助詞・する のときは、英語とつながって自然なので 0。</summary>
@@ -250,22 +273,31 @@ public sealed partial class CompositionDetector
                                 if (analysis.IsValid && analysis.Kana.Length > 0 && (analysis.Partial.Length == 0 || partialN))
                                 {
                                     var fullKana = partialN ? analysis.Kana + "ん" : analysis.Kana;
-                                    var isParticle = Meltype.Detection.DictionaryDetector.StartsWithParticle(lower) == lower;
-                                    var isSuru = IsSuruForm(fullKana);
-                                    // 日本語の語か: ローマ字見出しの辞書 (japanese.txt) と、よく使う語の読み (readings.txt、約 2 万語)
-                                    var isWord = _japanese.Words.ContainsWord(lower) || CommonReadings.Words.Contains(fullKana);
-                                    var next = isParticle || isSuru ? ReadingKind.JapaneseParticle : ReadingKind.JapaneseWord;
-                                    var cost = isParticle ? JapaneseParticleCost
-                                        : isSuru && fullKana.Length <= 4 ? JapaneseParticleCost
-                                        : isWord ? (fullKana.Length == 1 ? JapaneseSingleCharCost : JapaneseWordCost)
-                                        : KanaCost(fullKana);
-                                    // 末尾の ん は表示側 (RenderSegments) が付けるので、語の読みからは外す
-                                    token = (true, partialN && j == length ? analysis.Kana : fullKana, next, cost);
-                                    // 次の打鍵でも使い回せるのは、位置に依らない区間だけ
-                                    if (!partialN)
+                                    // かなの形にならない区間 (がぇ・ぇ など) は、日本語のトークンにしない。
+                                    // 日本語にならない綴りを「助詞 + 小書き」に割ると安く見えるため (gale → が + ぇ)。
+                                    if (!IsWellFormedKana(fullKana))
                                     {
-                                        _readingJapaneseTokens[lower] = token;
-                                        if (_readingJapaneseTokens.Count > ReadingCacheLimit) _readingJapaneseTokens.Clear();
+                                        token = (false, "", ReadingKind.JapaneseWord, 0);
+                                    }
+                                    else
+                                    {
+                                        var isParticle = Meltype.Detection.DictionaryDetector.StartsWithParticle(lower) == lower;
+                                        var isSuru = IsSuruForm(fullKana);
+                                        // 日本語の語か: ローマ字見出しの辞書 (japanese.txt) と、よく使う語の読み (readings.txt、約 2 万語)
+                                        var isWord = _japanese.Words.ContainsWord(lower) || CommonReadings.Words.Contains(fullKana);
+                                        var next = isParticle || isSuru ? ReadingKind.JapaneseParticle : ReadingKind.JapaneseWord;
+                                        var cost = isParticle ? JapaneseParticleCost
+                                            : isSuru && fullKana.Length <= 4 ? JapaneseParticleCost
+                                            : isWord ? (fullKana.Length == 1 ? JapaneseSingleCharCost : JapaneseWordCost)
+                                            : KanaCost(fullKana);
+                                        // 末尾の ん は表示側 (RenderSegments) が付けるので、語の読みからは外す
+                                        token = (true, partialN && j == length ? analysis.Kana : fullKana, next, cost);
+                                        // 次の打鍵でも使い回せるのは、位置に依らない区間だけ
+                                        if (!partialN)
+                                        {
+                                            _readingJapaneseTokens[lower] = token;
+                                            if (_readingJapaneseTokens.Count > ReadingCacheLimit) _readingJapaneseTokens.Clear();
+                                        }
                                     }
                                 }
                             }
@@ -399,6 +431,24 @@ public sealed partial class CompositionDetector
     }
 
     /// <summary>
+    /// そのかなの並びが、日本語の語・語の始まりとしてありうるか (読み辞書と日本語の辞書で見る)。
+    /// ありえない (てぃん・うぇあゔぇ など) ときは、ローマ字として読めても日本語に倒さない。
+    /// かなの形だけでは「れぽ」(外来語) と「てぃん」(語にならない) を区別できないため、辞書で見る。
+    /// </summary>
+    private bool PlausibleJapanese(string kana, string romaji)
+    {
+        if (kana.Length == 0) return false;
+        return CommonReadings.Words.Contains(kana) || _japanese.IsPrefix(romaji);
+    }
+
+    /// <summary>その語をかなにしたとき、日本語の形にならないか。</summary>
+    private bool KanaIsNotWellFormed(string word)
+    {
+        if (_romaji.AnalyzeFragment(word) is not { IsValid: true, Partial: "" } analysis) return true;
+        return !IsWellFormedKana(analysis.Kana);
+    }
+
+    /// <summary>
     /// 今までの決まりが日本語にしていた短い部分 (2 文字まで) を、DP が 1 つの英単語に取り込んだか。
     /// 取り込んだ英単語は、辞書にある強い語 (1 点) でなければならない。
     /// </summary>
@@ -415,10 +465,14 @@ public sealed partial class CompositionDetector
             if (!readKinds[i]) return false; // 英語が日本語になる側は、ここでは見ない
             var start = i;
             while (i < readKinds.Length && readKinds[i] != baseKinds[i]) i++;
-            if (i - start > 2) return false;
             if (SegmentCovering(reading, start) is not { IsEnglish: true } word || word.Raw.Length < 4) return false;
-            if (!IsKnownEnglishWord(word.Raw.ToLowerInvariant())) return false;
-            if (EnglishCost(word.Raw.ToLowerInvariant(), word.Raw) != EnglishWordCost) return false;
+            var lower = word.Raw.ToLowerInvariant();
+            if (!IsKnownEnglishWord(lower)) return false;
+            if (EnglishCost(lower, word.Raw) != EnglishWordCost) return false;
+            // 取り込まれたかなは 2 文字まで。ただし、取り込まれた側のかな (がぇ = gale) が日本語の形に
+            // ならないなら、その区切りは読み違えているので長くても採る。
+            if (i - start > 2 && SegmentCovering(baseline, start) is { } covered &&
+                IsWellFormedKana(covered.Kana)) return false;
             absorbed = true;
         }
         return absorbed;

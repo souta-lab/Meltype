@@ -219,7 +219,12 @@ public sealed partial class CompositionDetector
             : FindSpans(units, pending, precedingEnglish, followingEnglish, level, englishSentence && precedingEnglish == true, kanaInput, final);
         // 英字だけの入力は、全体を「日本語として読んだ場合」と「英語として読んだ場合」の点で比べても区切る (issue #838)。
         // 今までの決まりの結果 (segments) をそのまま使い回し、良くなる見込みがあるときだけ走らせる。
-        if (!kanaInput && ReadingComparison && token.All(char.IsAsciiLetter) && ShouldTryReadingComparison(segments) &&
+        if (Environment.GetEnvironmentVariable("MELTYPE_READING_DEBUG") == "5" && !kanaInput && ReadingComparison && token.All(char.IsAsciiLetter))
+        {
+            var rip = FindSpansReading(units, pending, level, final, precedingEnglish, followingEnglish, englishSentence);
+            Console.Error.WriteLine($"[hook] pre={ShouldTryReadingComparison(segments, token)} base=[{string.Join("|", segments.Select(x => (x.IsEnglish ? "E:" : "J:") + x.Raw + "/" + x.Kana))}] read=[{string.Join("|", (rip ?? []).Select(x => (x.IsEnglish ? "E:" : "J:") + x.Raw))}] better={(rip is null ? "null" : ReadingComparisonIsBetter(rip, segments, units, pending, level))}");
+        }
+        if (!kanaInput && ReadingComparison && token.All(char.IsAsciiLetter) && ShouldTryReadingComparison(segments, token) &&
             FindSpansReading(units, pending, level, final, precedingEnglish, followingEnglish, englishSentence) is { } reading &&
             ReadingComparisonIsBetter(reading, segments, units, pending, level))
             return reading;
