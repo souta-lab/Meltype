@@ -1651,9 +1651,156 @@ internal static class CompositionTests
     [Test]
     public static void Issue537_ProcrasticleStaysEnglish()
     {
-        var k = new Keyboard();
-        k.Type("procrasticle\n");
-        Assert.Equal("procrasticle", k.Host.Document);
+        var segmentation = Detector.UseScoredSegmentation;
+        try
+        {
+            foreach (var scored in new[] { false, true })
+            {
+                Detector.UseScoredSegmentation = () => scored;
+                var k = new Keyboard();
+                k.Type("procrasticle");
+                Assert.Equal("procrasticle", k.Showing);
+                k.Type("\n");
+                Assert.Equal("procrasticle", k.Host.Document);
+            }
+        }
+        finally
+        {
+            Detector.UseScoredSegmentation = segmentation;
+        }
+    }
+
+    [Test]
+    public static void Issue1132_ShortEnglishThenJapanese()
+    {
+        // 短い英単語の後ろが読める日本語でも、#537 の補正で全文英字に戻っていた。
+        var segmentation = Detector.UseScoredSegmentation;
+        var spellChecker = Detector.SpellChecker;
+        try
+        {
+            foreach (var scored in new[] { false, true })
+            {
+                foreach (var spell in new[] { false, true })
+                {
+                    foreach (var live in new[] { false, true })
+                    {
+                        Detector.UseScoredSegmentation = () => scored;
+                        Detector.SpellChecker = spell ? Detection.BuiltInWordChecker.Shared : null;
+                        foreach (var (typed, expected) in new[]
+                        {
+                    ("usbtunaide", "usbつないで"), ("usbtsunaide", "usbつないで"),
+                    ("USBtunaide", "USBつないで"), ("pctunaide", "pcつないで"),
+                    ("usbsuru", "usbする"), ("usbtsukatte", "usbつかって"),
+                    ("usbnuite", "usbぬいて"), ("usbwotunaide", "usbをつないで"),
+                    ("hdmitunaide", "hdmiつないで"),
+                })
+                        {
+                            var message = $"{typed} (点数方式: {scored}, スペル: {spell}, ライブ変換: {live})";
+                            var k = new Keyboard(live: live);
+                            k.Type(typed);
+                            Assert.Equal(expected, k.Showing, message + " 表示");
+                            k.Type("\n");
+                            Assert.Equal(expected, k.Host.Document, message + " Enter");
+
+                            k = new Keyboard(live: live);
+                            k.Type(typed + " ");
+                            Assert.True(k.Host.View?.Converting == true, message + " Space で変換を始める");
+                            k.Type("\n");
+                            Assert.Equal(expected, k.Host.Document, message + " Space → Enter");
+                        }
+                    }
+                }
+            }
+        }
+        finally
+        {
+            Detector.UseScoredSegmentation = segmentation;
+            Detector.SpellChecker = spellChecker;
+        }
+    }
+
+    [Test]
+    public static void Issue1132_ShortEnglishThenPendingJapanese()
+    {
+        var segmentation = Detector.UseScoredSegmentation;
+        var spellChecker = Detector.SpellChecker;
+        try
+        {
+            foreach (var scored in new[] { false, true })
+            {
+                foreach (var spell in new[] { false, true })
+                {
+                    foreach (var live in new[] { false, true })
+                    {
+                        Detector.UseScoredSegmentation = () => scored;
+                        Detector.SpellChecker = spell ? Detection.BuiltInWordChecker.Shared : null;
+                        foreach (var (typed, showing, committed) in new[]
+                        {
+                    ("usbtun", "usbつn", "usbつん"),
+                    ("usbtsukatt", "usbつかっt", "usbtsukatt"),
+                    ("prozac", "proざc", "prozac"),
+                    ("prozak", "proざk", "prozak"),
+                })
+                        {
+                            var message = $"{typed} (点数方式: {scored}, スペル: {spell}, ライブ変換: {live})";
+                            var k = new Keyboard(live: live);
+                            k.Type(typed);
+                            Assert.Equal(showing, k.Showing, message + " 入力途中");
+                            k.Type("\n");
+                            Assert.Equal(committed, k.Host.Document, message + " Enter");
+
+                            k = new Keyboard(live: live);
+                            k.Type(typed + " ");
+                            if (committed.All(char.IsAsciiLetter))
+                            {
+                                Assert.True(k.Host.View?.Converting != true, message + " Space で英字を確定する");
+                                Assert.Equal(committed + " ", k.Host.Document, message + " Space");
+                            }
+                            else
+                            {
+                                Assert.True(k.Host.View?.Converting == true, message + " Space で日本語を変換する");
+                                k.Type("\n");
+                                Assert.Equal(committed, k.Host.Document, message + " Space → Enter");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        finally
+        {
+            Detector.UseScoredSegmentation = segmentation;
+            Detector.SpellChecker = spellChecker;
+        }
+    }
+
+    [Test]
+    public static void Issue1132_KnownLimitation_ReadableEnglishAfterShortPrefix()
+    {
+        // 既知の問題: 本来は pronate のまま英字にしたいが、pro + なて と読めるため日本語との区別がつかない。
+        var segmentation = Detector.UseScoredSegmentation;
+        var spellChecker = Detector.SpellChecker;
+        try
+        {
+            foreach (var scored in new[] { false, true })
+            {
+                foreach (var spell in new[] { false, true })
+                {
+                    Detector.UseScoredSegmentation = () => scored;
+                    Detector.SpellChecker = spell ? Detection.BuiltInWordChecker.Shared : null;
+                    var k = new Keyboard();
+                    k.Type("pronate");
+                    Assert.Equal("proなて", k.Showing, "既知の問題の現在の表示");
+                    k.Type("\n");
+                    Assert.Equal("proなて", k.Host.Document, "本来の期待は pronate。判定を改善したときに更新する");
+                }
+            }
+        }
+        finally
+        {
+            Detector.UseScoredSegmentation = segmentation;
+            Detector.SpellChecker = spellChecker;
+        }
     }
 
     [Test]
@@ -3258,6 +3405,9 @@ internal static class CompositionTests
         Assert.Equal(0, dictionary.Count, "同梱の語句はユーザー辞書の一覧に出さない");
         // 報告 (#968): かんそうりつ の候補に 乾燥率
         Assert.True(CandidateDictionary.Load(null).Lookup("かんそうりつ").Contains("乾燥率"), "かんそうりつ → 乾燥率");
+        Assert.True(CandidateDictionary.Load(null).Lookup("ぶるあか").Contains("ブルーアーカイブ"), "ぶるあか → ブルーアーカイブ (#1106)");
+        Assert.True(CandidateDictionary.Load(null).Lookup("ー＞").Contains("→"), "ー＞ → → (#1135)");
+        Assert.True(CandidateDictionary.Load(null).Lookup("みかんせい").Contains("蜜柑星"), "みかんせい → 蜜柑星 (#1155)");
     }
 
     [Test]

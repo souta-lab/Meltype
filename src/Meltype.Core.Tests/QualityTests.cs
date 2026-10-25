@@ -137,6 +137,21 @@ internal static class Quality
         // ツール名 (Claude Code): code の de を助詞にしない (issue #1001)
         new("英語", "claudecode", "claudecode"),
         new("混在", "claudecodewotukau", "claudecodeをつかう"),
+        // ローマ字として最後まで読めるが日本語の語ではない英単語 (english-readable.txt)
+        new("英語", "image", "image"),               // issue #852
+        new("英語", "doomscroll", "doomscroll"),     // issue #876
+        new("英語", "printenv", "printenv"),         // issue #915
+        new("混在", "garagewokiku", "garageをきく"), // issue #1114
+        new("英語", "nohup", "nohup"),               // issue #1117
+        new("英語", "vocaloid", "vocaloid"),         // issue #1121
+        new("英語", "midi", "midi"),                 // issue #1122
+        new("英語", "ost", "ost"),                   // issue #1123
+        new("英語", "dive", "dive"),                 // issue #1125
+        new("英語", "dice", "dice"),                 // issue #1139
+        new("英語", "die", "die"),
+        // 似た綴りの日本語は今までどおり
+        new("日本語", "imeeji", "いめえじ"),
+        new("日本語", "gare-ji", "がれーじ"),
         new("混在", "foo_bar@example.com", "foo_bar@example.com"),
         new("混在", "taro+news@example.com", "taro+news@example.com"),
         new("混在", "yamada-taro@example.com", "yamada-taro@example.com"),
