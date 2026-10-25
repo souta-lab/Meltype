@@ -116,9 +116,12 @@ public sealed partial class CompositionDetector
             // 複数形 (invites) だけが辞書にあるとき、語幹 (invite) も同じ扱いにする
             if (lower.Length >= 4 && lower.EndsWith('s') &&
                 (IsListedEnglishWord(lower[..^1]) || _proper.Contains(lower[..^1]))) return EnglishWordCost;
-            // スペルチェッカーだけが知っている語 (repo・make・thin) は、ローマ字としても読めるなら弱く扱う。
+            // スペルチェッカーだけが知っている語 (repo・make・thin) は、ローマ字として最後まで読めるなら弱く扱う。
             // 日本語の語 (まけ・てぃん) とどちらにも読めるので、前後の文脈が無ければ日本語にする (issue #838 の案の重み)。
-            if (_romaji.AnalyzeFragment(lower).IsValid) return EnglishUnknownCost * raw.Length;
+            // 途中までしか読めない語 (delimit = でりみっと + t) は、日本語の語にならないので 1 点のまま。
+            // 複数形 (invites) は、語幹 (invite) が読めるかで決める (invites を invite より安くしない)。
+            var stem = lower.Length >= 4 && lower[^1] == 's' && IsKnownEnglishWord(lower[..^1]) ? lower[..^1] : lower;
+            if (_romaji.AnalyzeFragment(stem) is { IsValid: true, Partial: "" }) return EnglishUnknownCost * raw.Length;
             return EnglishWordCost;
         }
         var total = 0.0;
@@ -340,6 +343,102 @@ public sealed partial class CompositionDetector
         return segments;
     }
 
+    /// <summary>
+    /// 英語の区間の末尾が助詞になっただけか (destroyersha → destroyers|は)。
+    /// 英字をかなに変える区切りを採ってよいかの判断に使う (trackutalkko → trackうtalkこ は採らない)。
+    /// </summary>
+    private static bool IsEnglishTailParticles(List<CompositionSegment> reading, List<CompositionSegment> baseline)
+    {
+        var index = 0;
+        for (var b = 0; b < baseline.Count;)
+        {
+            if (!baseline[b].IsEnglish)
+            {
+                if (index >= reading.Count || reading[index].IsEnglish || reading[index].Raw != baseline[b].Raw) return false;
+                index++;
+                b++;
+                continue;
+            }
+            // 今までの決まりで、続けて英語になっている部分をまとめる (destroyer|sha)
+            var run = new System.Text.StringBuilder();
+            while (b < baseline.Count && baseline[b].IsEnglish)
+            {
+                run.Append(baseline[b].Raw);
+                b++;
+            }
+            // その部分を、英語と助詞で同じ綴りのまま覆っているか (destroyers|は)
+            var parts = new System.Text.StringBuilder();
+            var particles = 0;
+            while (parts.Length < run.Length)
+            {
+                if (index >= reading.Count) return false;
+                var next = reading[index];
+                if (!next.IsEnglish)
+                {
+                    if (!IsParticle(next.Raw)) return false;
+                    particles++;
+                }
+                parts.Append(next.Raw);
+                index++;
+            }
+            if (parts.ToString() != run.ToString() || particles == 0) return false;
+        }
+        return index == reading.Count;
+    }
+
+    /// <summary>
+    /// 今までの決まりが日本語にしていた短い部分 (2 文字まで) を、DP が 1 つの英単語に取り込んだか。
+    /// 取り込んだ英単語は、辞書にある強い語 (1 点) でなければならない。
+    /// </summary>
+    private bool IsShortJapaneseAbsorbedIntoWord(List<CompositionSegment> reading, List<CompositionSegment> baseline)
+    {
+        var readKinds = ExpandEnglishFlags(reading);
+        var baseKinds = ExpandEnglishFlags(baseline);
+        if (readKinds.Length != baseKinds.Length) return false;
+        var absorbed = false;
+        var i = 0;
+        while (i < readKinds.Length)
+        {
+            if (readKinds[i] == baseKinds[i]) { i++; continue; }
+            if (!readKinds[i]) return false; // 英語が日本語になる側は、ここでは見ない
+            var start = i;
+            while (i < readKinds.Length && readKinds[i] != baseKinds[i]) i++;
+            if (i - start > 2) return false;
+            if (SegmentCovering(reading, start) is not { IsEnglish: true } word || word.Raw.Length < 4) return false;
+            if (!IsKnownEnglishWord(word.Raw.ToLowerInvariant())) return false;
+            if (EnglishCost(word.Raw.ToLowerInvariant(), word.Raw) != EnglishWordCost) return false;
+            absorbed = true;
+        }
+        return absorbed;
+    }
+
+    /// <summary>1 文字ずつ、その位置が英語の区間か。</summary>
+    private static bool[] ExpandEnglishFlags(List<CompositionSegment> segments)
+    {
+        var flags = new List<bool>();
+        foreach (var segment in segments) for (var i = 0; i < segment.Raw.Length; i++) flags.Add(segment.IsEnglish);
+        return [.. flags];
+    }
+
+    /// <summary>その位置を含む区間。</summary>
+    private static CompositionSegment? SegmentCovering(List<CompositionSegment> segments, int position)
+    {
+        var offset = 0;
+        foreach (var segment in segments)
+        {
+            if (position < offset + segment.Raw.Length) return segment;
+            offset += segment.Raw.Length;
+        }
+        return null;
+    }
+
+    /// <summary>区間の綴りが、そのまま助詞か (は・が・を など)。</summary>
+    private static bool IsParticle(string raw)
+    {
+        var lower = raw.ToLowerInvariant();
+        return lower.Length > 0 && Meltype.Detection.DictionaryDetector.StartsWithParticle(lower) == lower;
+    }
+
     /// <summary>区間を表示したときに英字のまま残る文字の数。</summary>
     private static int RenderedLetters(List<CompositionSegment> segments) =>
         segments.Sum(segment => (segment.IsEnglish ? segment.Raw : segment.Kana).Count(char.IsAsciiLetter));
@@ -360,8 +459,19 @@ public sealed partial class CompositionDetector
             if (Memory?.Get(segment.Raw.ToLowerInvariant()) == false) return false;
         if (reading.Count == 0 || !reading.Any(segment => segment.IsEnglish)) return false;
         // 今までの決まりより英字をかなに変える区切りは採らない
-        // (trackutalkko を trackうtalkこ にしない。英字のまま残る文字の数で比べる)
-        if (RenderedLetters(reading) < RenderedLetters(baseline)) return false;
+        // (trackutalkko を trackうtalkこ にしない。英字のまま残る文字の数で比べる)。
+        // ただし、かなにするのが助詞だけなら採る (destroyersha → destroyers|は。
+        // 英語のあとに続く は・が・を などは、かなにするのが正しい)。
+        // 今までの決まりでは、短いかなを英単語の一部として読めない (わたしので|limit、ぜんぶで|pressing)。
+        // DP がそのかなを英単語に取り込んだとき、取り込まれたかなの側が 2 文字までなら採る
+        // (で → delimit の de)。長いかな (Tokyo の と) は取り込まない。
+        if (IsShortJapaneseAbsorbedIntoWord(reading, baseline)) return true;
+        if (RenderedLetters(reading) < RenderedLetters(baseline))
+        {
+            // 英語の区間の末尾が助詞になっただけなら採る (destroyersha → destroyers|は)
+            if (IsEnglishTailParticles(reading, baseline)) return true;
+            return false;
+        }
         // 今までの決まりが、日本語の区間の中に英字を残している = 明らかに崩れている。
         // ただし、それだけで新しい決め方を使うと、大文字で始まる語 (Tokyo) のような
         // わざと英字を残す区切りまで崩すので、入力全体が 1 つの英単語になる場合だけにする。

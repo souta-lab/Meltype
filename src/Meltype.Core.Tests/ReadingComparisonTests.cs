@@ -99,6 +99,45 @@ internal static class ReadingComparisonTests
         }
     }
 
+    /// <summary>アプリと同じ構成 (既定の検出器 + 同梱の英単語) で、β版の有無だけを変えて確定した文字列。</summary>
+    private static string Render(string typed, bool beta)
+    {
+        var detector = CompositionDetector.CreateDefault();
+        detector.SpellChecker = Detection.BuiltInWordChecker.Shared;
+        detector.UseReadingComparison = () => beta;
+        var text = new CompositionText(detector);
+        foreach (var c in typed) text.Append(c);
+        return text.RenderSegments(final: true, convert: null);
+    }
+
+    [Test]
+    public static void Beta_AbsorbsShortKanaIntoAKnownWord()
+    {
+        // 環境変数で有効にしたままテストを流したときは、「切ったとき」を作れないので飛ばす
+        if (BetaForcedByEnvironment) return;
+        // 今までの決まりは、短いかなを英単語の一部として読めない (わたしので|limit)。
+        // DP が で を delimit の de として取り込んだら採る。
+        Assert.Equal("わたしのでlimitが", Render("watashinodelimitga", beta: false));
+        Assert.Equal("わたしのdelimitが", Render("watashinodelimitga", beta: true));
+    }
+
+    [Test]
+    public static void Beta_SplitsTrailingParticleToKana()
+    {
+        if (BetaForcedByEnvironment) return;
+        // 英語のあとに続く助詞は、かなにする (destroyers|は)。
+        Assert.Equal("きのうはdestroyersha", Render("kinouhadestroyersha", beta: false));
+        Assert.Equal("きのうはdestroyersは", Render("kinouhadestroyersha", beta: true));
+    }
+
+    [Test]
+    public static void Beta_LeavesCanonicalCasesAlone()
+    {
+        // 大文字の語 (Tokyo・Hello) と、固有名詞の混ざった語は変えない
+        foreach (var input in new[] { "Tokyo", "Hello", "yabaiTshatuyasann" })
+            Assert.Equal(Render(input, beta: false), Render(input, beta: true));
+    }
+
     /// <summary>打って Enter で確定した文字列。</summary>
     private static string Committed(string keys)
     {
