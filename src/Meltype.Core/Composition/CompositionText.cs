@@ -506,7 +506,7 @@ public sealed class CompositionText
             }
             // 最後の単位の途中で区間が分かれている (medal|s + は の sha) なら、最後の日本語の区間に入っている分 (ha = は) だけを消す。
             // 前の区間に入っている分 (s) は、入力途中の文字に戻して読み直す。
-            else if (segments.Count > 1 && !KanaInput && segments[^1].Raw.Length < last.Raw.Length)
+            else if (segments.Count > 1 && !KanaInput && segments[^1].Raw.Length > 0 && segments[^1].Raw.Length < last.Raw.Length)
             {
                 _pending.Append(last.Raw[..^segments[^1].Raw.Length]);
                 Normalize(final: false);
@@ -1406,10 +1406,10 @@ public sealed class CompositionText
     {
         var raw = 0;
         var unit = 0;
+        var unitEnd = 0;
         foreach (var segment in segments)
         {
             raw += segment.Raw.Length;
-            var unitEnd = 0;
             while (unit < _units.Count && unitEnd < raw) unitEnd += _units[unit++].Raw.Length;
             if (unitEnd != raw) return false;
         }

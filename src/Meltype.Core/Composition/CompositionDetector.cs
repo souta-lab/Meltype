@@ -125,8 +125,10 @@ public sealed partial class CompositionDetector
     private bool ScoredSegmentation => ScoredByEnvironment || UseScoredSegmentation?.Invoke() == true;
 
     /// <summary>
-    /// 区間分けを差し替える (テスト用)。単位 + 入力途中の子音を受け取って区間を返す。null を返したら普通に分ける。
+    /// 区間分けを差し替える (テスト専用)。単位 + 入力途中の子音を受け取って区間を返す。null を返したら普通に分ける。
     /// 単位の途中で分かれた区間 (medal|s + は の sha) を直接組み立てて、表示・BackSpace・変換が正しく動くかを確かめるのに使う。
+    /// 契約: (1) 保護範囲 (URL など) の切れ目ごとに、その切れ目の中の単位だけが渡る (生の位置ではない)。
+    /// (2) Segments() の控えのキーにこの値は入らないので、同じ CompositionText で値を変えるときは Segments を作り直すこと。
     /// </summary>
     internal Func<IReadOnlyList<CompositionUnit>, string, IReadOnlyList<CompositionSegment>?>? SegmentOverride { get; set; }
 

@@ -43,10 +43,17 @@ internal static class UnitSplitTests
     [Test]
     public static void SplitUnit_IsBuiltInTheMiddleOfAUnit()
     {
-        // 前提: sha は 1 つの単位 (しゃ) で、区間はその途中 (s|ha) で分かれている
-        var text = Typed("medalsha");
-        Assert.Equal("め|だ|l|しゃ", string.Join("|", text.Units.Select(u => u.Kana)));
-        Assert.Equal("medals|ha", string.Join("|", text.Segments().Select(s => s.Raw)));
+        // 前提: sha は 1 つの単位 (しゃ)。区間分けを差し替えなければ、sha の途中では分かれない
+        var plain = new CompositionText(CompositionDetector.CreateDefault());
+        foreach (var c in "medalsha") plain.Append(c);
+        Assert.Equal("め|だ|l|しゃ", string.Join("|", plain.Units.Select(u => u.Kana)));
+        Assert.Equal("medalsha", string.Join("|", plain.Segments().Select(s => s.Raw)), "ふつうの判定");
+
+        // 区間分けを差し替えると、sha の途中 (s|ha) で分かれる。表示は単位を壊さない
+        var split = new CompositionText(SplitDetector());
+        foreach (var c in "medalsha") split.Append(c);
+        Assert.Equal("medals|ha", string.Join("|", split.Segments().Select(s => s.Raw)), "差し替えた区間分け");
+        Assert.Equal("medalsは", split.Display(final: true), "表示は単位を壊さない");
     }
 
     [Test]
@@ -121,6 +128,47 @@ internal static class UnitSplitTests
         f6.Type("medalsha ");
         f6.Press(VirtualKeys.F6);
         Assert.Equal("めだls|は", string.Join("|", f6.Host.View!.Clauses!), "F6");
+    }
+
+    [Test]
+    public static void SplitUnit_PendingFollowsTheSplit()
+    {
+        // 入力途中の ん (pending) も、分かれた区間の後ろで今までどおり扱う
+        var text = Typed("medalshan");
+        Assert.Equal("medalsはん", text.Display(final: true));
+        Assert.Equal("はん", text.KanaForSegment(1), "入力途中の ん を含める");
+        Assert.Equal("han", text.RawForReading(1, 0, 2), "打った英字も han");
+        text.RemoveLast();
+        Assert.Equal("medalsha", text.Raw, "BackSpace はまず入力途中の ん を消す");
+        text.RemoveLast();
+        Assert.Equal("medals", text.Raw, "その次の BackSpace で は だけを消す");
+    }
+
+    [Test]
+    public static void SplitUnit_ScoredPathKeepsTheUnitWhole()
+    {
+        // 実の点数方式 (α版) でも、単位の途中で分かれた区間で表示と BackSpace が壊れない
+        var detector = CompositionDetector.CreateDefault();
+        detector.SpellChecker = Meltype.Detection.BuiltInWordChecker.Shared;
+        detector.UseScoredSegmentation = () => true;
+        var k = new Keyboard(detector: detector);
+        k.Type("medalsha\n");
+        Assert.Equal("medalsは", string.Concat(k.Host.Output), "点数方式の表示");
+
+        var back = new Keyboard(detector: detector);
+        back.Type("medalsha\b\n");
+        Assert.Equal("medals", string.Concat(back.Host.Output), "点数方式の BackSpace");
+    }
+
+    [Test]
+    public static void SplitUnit_ProtectedRangeSplitsAUnitToo()
+    {
+        // 保護範囲 (URL・@・パス) の切れ目が単位の途中に入るときも、区間ごとのかながずれない。
+        // 以前は ぱ が落ちていた (@userz/path の 3 つ目)。いまは ぱth になる
+        var text = new CompositionText(CompositionDetector.CreateDefault());
+        foreach (var c in "@userz/path") text.Append(c);
+        var kana = string.Join("|", Enumerable.Range(0, text.Segments(final: true).Count).Select(text.KanaForSegment));
+        Assert.Equal("@うせrz|/|ぱth", kana, "保護範囲の切れ目でも、単位のかなを落とさない");
     }
 
     [Test]
