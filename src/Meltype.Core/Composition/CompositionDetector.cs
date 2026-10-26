@@ -125,6 +125,12 @@ public sealed partial class CompositionDetector
     private bool ScoredSegmentation => ScoredByEnvironment || UseScoredSegmentation?.Invoke() == true;
 
     /// <summary>
+    /// 区間分けを差し替える (テスト用)。単位 + 入力途中の子音を受け取って区間を返す。null を返したら普通に分ける。
+    /// 単位の途中で分かれた区間 (medal|s + は の sha) を直接組み立てて、表示・BackSpace・変換が正しく動くかを確かめるのに使う。
+    /// </summary>
+    internal Func<IReadOnlyList<CompositionUnit>, string, IReadOnlyList<CompositionSegment>?>? SegmentOverride { get; set; }
+
+    /// <summary>
     /// 単位列 (+ 入力途中の子音) を英語区間と日本語区間に分ける。
     /// 先頭から見て、ある単位から始まる最長の「英語と言える」区間があればそこを英語にする。
     /// </summary>
@@ -136,6 +142,7 @@ public sealed partial class CompositionDetector
     public IReadOnlyList<CompositionSegment> Segment(IReadOnlyList<CompositionUnit> units, string pending, bool? precedingEnglish = null, bool? followingEnglish = null,
         DetectionLevel level = DetectionLevel.Balanced, bool englishSentence = false, bool kanaInput = false, bool final = false)
     {
+        if (SegmentOverride?.Invoke(units, pending) is { } overridden) return overridden;
         // 区間分けは units[i..j] の生文字列・かなを何度も作る。1 回の Segment 呼び出しの間だけ、
         // 連結した原文と各位置のオフセットを使い回す (内容・順序は同じで、文字列を毎回連結しない)。
         Prepare(units);

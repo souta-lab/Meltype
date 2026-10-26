@@ -246,10 +246,11 @@ internal static class CompositionTests
         public Keyboard(bool live = false, bool direct = false, ConversionHistory? history = null, IKanjiConverter? converter = null,
             Func<string, IReadOnlyList<string>>? moreCandidates = null, UserDictionary? userDictionary = null, LanguageMemory? languages = null,
             TranslationDictionary? translations = null, TranslationHistory? translationHistory = null, bool slashAsMiddleDot = false, Predictor? predictor = null,
-            Func<DateTime>? now = null, bool showTypedKeys = false, bool tabConversion = false, bool englishNamePredictions = false)
+            Func<DateTime>? now = null, bool showTypedKeys = false, bool tabConversion = false, bool englishNamePredictions = false,
+            CompositionDetector? detector = null)
         {
             Direct = direct;
-            Controller = new CompositionController(Gate, Detector, converter ?? Converter, Host, new CompositionOptions
+            Controller = new CompositionController(Gate, detector ?? Detector, converter ?? Converter, Host, new CompositionOptions
             {
                 LiveConversion = () => live,
                 DirectMode = () => Direct,

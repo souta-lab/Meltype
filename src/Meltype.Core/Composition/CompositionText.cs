@@ -493,14 +493,22 @@ public sealed class CompositionText
         if (_pending.Length > 0) _pending.Length--;
         else if (_units.Count > 0)
         {
+            var segments = Mode == DisplayMode.Auto ? Segments() : [];
             var englishTail = Mode is DisplayMode.HalfWidthAlphanumeric or DisplayMode.FullWidthAlphanumeric ||
-                              (Mode == DisplayMode.Auto && Segments() is { Count: > 0 } segments && segments[^1].IsEnglish);
+                              (segments.Count > 0 && segments[^1].IsEnglish);
             var last = _units[^1];
             _units.RemoveAt(_units.Count - 1);
             // 英字として見せている部分は 1 文字ずつ消す (google の "le" のように 1 音にまとまった単位を丸ごと消さない)。
             if (englishTail && last.Raw.Length > 1 && !KanaInput)
             {
                 _pending.Append(last.Raw[..^1]);
+                Normalize(final: false);
+            }
+            // 最後の単位の途中で区間が分かれている (medal|s + は の sha) なら、最後の日本語の区間に入っている分 (ha = は) だけを消す。
+            // 前の区間に入っている分 (s) は、入力途中の文字に戻して読み直す。
+            else if (segments.Count > 1 && !KanaInput && segments[^1].Raw.Length < last.Raw.Length)
+            {
+                _pending.Append(last.Raw[..^segments[^1].Raw.Length]);
                 Normalize(final: false);
             }
         }
@@ -888,11 +896,17 @@ public sealed class CompositionText
         if (KanaInput) return null;
         var segments = Segments(final: true);
         if (segmentIndex < 0 || segmentIndex >= segments.Count) return null;
-        var from = segments.Take(segmentIndex).Sum(s => s.Raw.Length);
-        var units = UnitsInRawRange(_units, from, from + segments[segmentIndex].Raw.Length, out var pending);
-        var pieces = new List<(string Kana, string Raw)>();
-        foreach (var unit in units) pieces.Add((unit.Kana, unit.Raw));
-        if (pending.Length > 0) pieces.Add((_detector.Romaji.ConvertLenient(pending.ToLowerInvariant(), final: true), pending));
+        // 区間の読み (変換に渡したかな) と、単位のかけらのかなが一致するなら、かけらで数える (単位の途中で分かれた区間: medal|s + は の は → ha)。
+        // 一致しないとき (保護範囲の区切りで読み直した区間・半角にした開きの記号) は、今までどおり区間の原文を読み直して数える。
+        var pieces = SegmentPieces(segments, segmentIndex);
+        var reading = segments[segmentIndex].Kana + (segmentIndex == segments.Count - 1 ? PendingText(final: true) : "");
+        if (segments[segmentIndex].IsEnglish || string.Concat(pieces.Select(piece => piece.Kana)) != reading)
+        {
+            var (from, to) = SegmentRange(segments, segmentIndex);
+            var units = UnitsInRawRange(_units, from, to, out var pending);
+            pieces = [.. units.Select(unit => (unit.Kana, unit.Raw))];
+            if (pending.Length > 0) pieces.Add((_detector.Romaji.ConvertLenient(pending.ToLowerInvariant(), final: true), pending));
+        }
 
         return RawInPieces(pieces, start, length);
     }
@@ -928,7 +942,13 @@ public sealed class CompositionText
         var pieces = new List<(string Kana, string Raw)>();
         foreach (var unit in units) pieces.Add((unit.Kana, unit.Raw));
         if (pending.Length > 0) pieces.Add((_detector.Romaji.ConvertLenient(pending.ToLowerInvariant(), final: true), pending));
-        if (string.Concat(pieces.Select(piece => piece.Kana)) != string.Concat(kanas)) return none;
+        if (string.Concat(pieces.Select(piece => piece.Kana)) != string.Concat(kanas))
+        {
+            // 区間が単位の途中で分かれている (medal|s + は) と、単位のかな (しゃ) と文節のかな (s + は) が合わない。区間ごとのかけらで数え直す
+            var segments = Segments(final: true);
+            pieces = [.. Enumerable.Range(0, segments.Count).SelectMany(s => SegmentPieces(segments, s))];
+            if (string.Concat(pieces.Select(piece => piece.Kana)) != string.Concat(kanas)) return none;
+        }
 
         var raws = new string?[kanas.Count];
         var start = 0;
@@ -948,21 +968,65 @@ public sealed class CompositionText
     {
         var segments = Segments(final: true);
         if (segmentIndex < 0 || segmentIndex >= segments.Count) return null;
-        var unit = 0;
-        for (var s = 0; s < segmentIndex; s++)
+        var kana = string.Concat(SegmentPieces(segments, segmentIndex).Select(piece => piece.Kana));
+        return kana.Length > 0 ? kana : null;
+    }
+
+    /// <summary>区間 segmentIndex が、打った文字 (Raw) のどこからどこまでか。</summary>
+    private static (int From, int To) SegmentRange(IReadOnlyList<CompositionSegment> segments, int segmentIndex)
+    {
+        var from = 0;
+        for (var s = 0; s < segmentIndex; s++) from += segments[s].Raw.Length;
+        return (from, from + segments[segmentIndex].Raw.Length);
+    }
+
+    /// <summary>
+    /// 打った文字の [from, to) に入る、単位のかけら (単位の番号と、その単位の Raw のうち入る範囲)。
+    /// 区間は単位の途中で分かれることがある (medal|s + は: 単位 sha の s が英語、ha が日本語)。そのときは 1 つの単位が、かけらとして 2 つの区間に入る。
+    /// 単位の後ろ (入力途中の子音) は含めない。
+    /// </summary>
+    private List<(int Unit, int Start, int Length)> UnitSlices(int from, int to)
+    {
+        var slices = new List<(int Unit, int Start, int Length)>();
+        var offset = 0;
+        for (var i = 0; i < _units.Count && offset < to; i++)
         {
-            var remaining = segments[s].Raw.Length;
-            while (unit < _units.Count && remaining > 0) remaining -= _units[unit++].Raw.Length;
+            var end = offset + _units[i].Raw.Length;
+            if (end > from)
+            {
+                var start = Math.Max(from, offset);
+                slices.Add((i, start - offset, Math.Min(to, end) - start));
+            }
+            offset = end;
         }
-        var builder = new StringBuilder();
-        var rawLength = segments[segmentIndex].Raw.Length - (segmentIndex == segments.Count - 1 ? _pending.Length : 0);
-        while (unit < _units.Count && rawLength > 0)
+        return slices;
+    }
+
+    /// <summary>
+    /// 区間 segmentIndex の、かな と 打った文字 の組の並び。単位が丸ごと入るなら単位のかな、単位の途中で分かれたかけら (sha の ha) は
+    /// そのかけらだけをローマ字として読んだかな (は)。区間が入力途中の子音までかかるなら、その子音を確定扱いで読んだかなも足す。
+    /// </summary>
+    private List<(string Kana, string Raw)> SegmentPieces(IReadOnlyList<CompositionSegment> segments, int segmentIndex)
+    {
+        var (from, to) = SegmentRange(segments, segmentIndex);
+        var pieces = new List<(string Kana, string Raw)>();
+        foreach (var (index, start, length) in UnitSlices(from, to))
         {
-            builder.Append(_units[unit].Kana);
-            rawLength -= _units[unit++].Raw.Length;
+            var unit = _units[index];
+            if (length == unit.Raw.Length) pieces.Add((unit.Kana, unit.Raw));
+            else
+            {
+                var piece = unit.Raw.Substring(start, length);
+                pieces.Add((_detector.Romaji.ConvertLenient(piece.ToLowerInvariant(), final: true), piece));
+            }
         }
-        if (segmentIndex == segments.Count - 1 && _pending.Length > 0) builder.Append(PendingText(final: true));
-        return builder.Length > 0 ? builder.ToString() : null;
+        var unitsLength = Raw.Length - _pending.Length;
+        if (to > unitsLength)
+        {
+            var pending = Raw[Math.Max(from, unitsLength)..to];
+            pieces.Add((_detector.Romaji.ConvertLenient(pending.ToLowerInvariant(), final: true), pending));
+        }
+        return pieces;
     }
 
     /// <param name="final">確定・変換のときは true (語末の n を ん にする)。</param>
@@ -1306,20 +1370,16 @@ public sealed class CompositionText
         _units.InsertRange(start, hiragana.Select(c => new CompositionUnit(c.ToString(), c.ToString())));
     }
 
-    /// <summary>単位ごとに、英語として見せている区間に入っているか。</summary>
+    /// <summary>単位ごとに、英語として見せている区間に入っているか。単位の途中で区間が分かれているなら、一部でも英語の区間に入っていれば英語。</summary>
     private bool[] UnitIsEnglish()
     {
         var result = new bool[_units.Count];
-        var unit = 0;
-        foreach (var segment in Segments())
+        var segments = Segments();
+        for (var s = 0; s < segments.Count; s++)
         {
-            var remaining = segment.Raw.Length;
-            while (unit < _units.Count && remaining > 0)
-            {
-                result[unit] = segment.IsEnglish;
-                remaining -= _units[unit].Raw.Length;
-                unit++;
-            }
+            if (!segments[s].IsEnglish) continue;
+            var (from, to) = SegmentRange(segments, s);
+            foreach (var (unit, _, _) in UnitSlices(from, to)) result[unit] = true;
         }
         return result;
     }
