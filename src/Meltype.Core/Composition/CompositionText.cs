@@ -1375,6 +1375,23 @@ public sealed class CompositionText
     {
         var result = new bool[_units.Count];
         var segments = Segments();
+        // 区間が単位の境界に揃っている (今の既定の判定) ときは、かけらを作らずに数える。
+        // ここは打鍵のたびに呼ばれる (もしかして) ので、リストの確保を避ける。
+        if (AlignedToUnits(segments))
+        {
+            var unit = 0;
+            foreach (var segment in segments)
+            {
+                var remaining = segment.Raw.Length;
+                while (unit < _units.Count && remaining > 0)
+                {
+                    var u = unit++;
+                    if (segment.IsEnglish) result[u] = true;
+                    remaining -= _units[u].Raw.Length;
+                }
+            }
+            return result;
+        }
         for (var s = 0; s < segments.Count; s++)
         {
             if (!segments[s].IsEnglish) continue;
@@ -1382,6 +1399,21 @@ public sealed class CompositionText
             foreach (var (unit, _, _) in UnitSlices(from, to)) result[unit] = true;
         }
         return result;
+    }
+
+    /// <summary>区間の切れ目が、すべて単位の切れ目に一致しているか (かけらを作る必要がないか)。</summary>
+    private bool AlignedToUnits(IReadOnlyList<CompositionSegment> segments)
+    {
+        var raw = 0;
+        var unit = 0;
+        foreach (var segment in segments)
+        {
+            raw += segment.Raw.Length;
+            var unitEnd = 0;
+            while (unit < _units.Count && unitEnd < raw) unitEnd += _units[unit++].Raw.Length;
+            if (unitEnd != raw) return false;
+        }
+        return raw <= Raw.Length;
     }
 
     private string PendingText(bool final)
